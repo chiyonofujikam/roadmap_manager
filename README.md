@@ -1,6 +1,6 @@
 # Roadmap Management Tool
 
-Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as time tracking, LC updates, and interface creatino management.
+Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as time tracking, LC updates, and interface creation management.
 
 ---
 
