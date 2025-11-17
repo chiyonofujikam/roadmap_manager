@@ -1,0 +1,21 @@
+[project]
+name = "roadmap"
+version = "0.1.0"
+description = "Automation tool for CE VHST Roadmap management"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.2",
+    "pandas>=2.2.0",
+    "tqdm>=4.67.1",
+    "xlwings>=0.33.16",
+]
+
+[project.scripts]
+roadmap = "roadmap.main:run"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
