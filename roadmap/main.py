@@ -1,9 +1,12 @@
 """
+Description:
     Main script for CE VHST Roadmap automation Handles:
         1. Pointage (time tracking export)
         2. Updating conditional lists (LC)
         3. Creating user interfaces
         4. Deleting interfaces
+
+Author: Mustapha ELKAMILI
 """
 import argparse
 import os
@@ -18,48 +21,73 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
 from tqdm import tqdm
 
-from .helpers import build_interface, get_collaborators, logger, valid_choice, add_validation_list
-
-if platform.system() == "Windows":
-    BASE_DIR = Path(r"C:\Users\Consultant\OneDrive - IKOSCONSULTING\test_RM\files")
-else:
-    BASE_DIR = Path("/mnt/c/Users/Consultant/OneDrive - IKOSCONSULTING/test_RM/files")
+from .helpers import (add_validation_list, build_interface, get_collaborators,
+                      get_parser, logger, valid_choice)
 
 app = xw.App(visible=False)
 
+
 class RoadmapManager:
-    def __init__(self):
-        self.base_path = BASE_DIR
-        self.synthese_file = self.base_path / "Synthèse_RM_CE_VHST.xlsx"
-        self.template_file = self.base_path / "RM_NOM Prénom.xlsx"
+    def __init__(self, base_dir: str):
+        self.base_path = base_dir
+
+        # Define paths for configuration files
+        self.synthese_file = self.base_path / "Synthèse_RM_CE.xlsm"
+        self.template_file = self.base_path / "RM_template.xlsx"
+
+        # Define and create necessary folders
         self.rm_folder = self.base_path / "RM_Collaborateurs"
-    
-    def check_rm_archive(self):
+        self.archived_folder = self.base_path / "Archived"
+        self.deleted_folder = self.base_path / "Deleted"
+
+        for folder in [self.rm_folder, self.archived_folder, self.deleted_folder]:
+            folder.mkdir(exist_ok=True)
+
+        # Check existence of essential files
+        self.all_ok = all([
+            self.synthese_file.exists(),
+            self.template_file.exists()
+        ])
+
+        if not self.all_ok:
+            logger.error("Required files 'Synthese_RM_CE.xlsm' or 'RM_template.xlsx' are missing. Please check the base directory.")
+
+    def check_roadmap_archive(self) -> Path:
         """Archive existing folder"""
         if self.rm_folder.exists():
-            shutil.move(
-                self.rm_folder,
-                self.base_path / f"Archive_RM_Collaborateurs_{datetime.now():%d%m%Y_%H%M%S}"
-            )
+            rm_count = sum(1 for f in self.rm_folder.glob("*.xlsx") if f.is_file())
+            path_rm = self.archived_folder / f"Archive_RM_Collaborateurs_{datetime.now():%d%m%Y_%H%M%S}"
+            if rm_count != 0:
+                shutil.move(self.rm_folder, path_rm)
+            return path_rm
+
         self.rm_folder.mkdir(exist_ok=True)
+        return self.rm_folder
 
-    def create_interfaces_fast(self, max_workers=8):
+    def create_interfaces_fast(self, archive: bool, max_workers=8):
         """Create user interfaces using openpyxl (parallel). estimated time: 9s (51files)"""
-        logger.info("[CREATE_INTERFACES] Parallel interface creation")
+        if not self.all_ok:
+            return
 
-        # Load collaborators
+        logger.info("[CREATE_INTERFACES] Parallel processing mode interface creation")
+
         collaborators = get_collaborators(self.synthese_file)
         if not collaborators:
             logger.info(
                 "[CREATE_INTERFACES] the list of CE is empty."
-                f" Please check 'Gestion_Interfaces' sheet in '{self.synthese_file}'"
-            )
+                f" Please check 'Gestion_Interfaces' sheet in '{self.synthese_file}'")
             return
 
         logger.info(f"[CREATE_INTERFACES] Found {len(collaborators)} collaborators")
-        self.check_rm_archive()
 
-        template_bytes = Path(self.template_file).read_bytes()
+        if archive:
+            self.check_roadmap_archive()
+
+        try:
+            template_bytes = Path(self.template_file).read_bytes()
+        except PermissionError:
+            logger.error(f"'{self.template_file}' is opened. Please close the excel file")
+            return
 
         futures = []
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -77,29 +105,34 @@ class RoadmapManager:
 
         logger.info("[CREATE_INTERFACES] parallel creation complete.")
 
-    def create_interfaces(self):
+    def create_interfaces(self, archive: bool):
         """Create user interfaces using openpyxl. estimated time: 50s (51files)"""
-        logger.info("[CREATE_INTERFACES] interface creation")
+        if not self.all_ok:
+            return
 
-        # Load collaborators
-        collaborators = get_collaborators(self.synthese_file)
+        logger.info("[CREATE_INTERFACES] interface creation (Normal processing mode)")
+
+        collaborators = get_collaborators(self.synthese_file)[:3]
         if not collaborators:
             logger.info(
                 "[CREATE_INTERFACES] the list of CE is empty."
-                f" Please check 'Gestion_Interfaces' sheet in '{self.synthese_file}'"
-            )
+                f" Please check 'Gestion_Interfaces' sheet in '{self.synthese_file}'")
             return
 
-        logger.info(f"[CREATE_INTERFACES] Found {len(collaborators)} collaborators")
+        logger.info(f"[CREATE_INTERFACES] Found {len(collaborators)} collaborators, synthese file : {self.synthese_file.name}")
 
-        # check if rm_folder exists
-        self.check_rm_archive()
+        if archive:
+            self.check_roadmap_archive()
 
         for collab in tqdm(collaborators, desc="Creating interfaces", total=len(collaborators)):
             target = self.rm_folder / f"RM_{collab}.xlsx"
 
-            # Clone template
-            wb = load_workbook(self.template_file)
+            try:
+                wb = load_workbook(self.template_file)
+            except PermissionError:
+                logger.error(f"'{self.template_file}' is opened. Please close the excel file")
+                return
+            
             ws_pointage = wb["POINTAGE"]
             ws_lc = wb["LC"]
 
@@ -129,22 +162,24 @@ class RoadmapManager:
 
         logger.info("[CREATE_INTERFACES] creation done.")
 
-    def create_interfaces_xlwings(self):
+    def create_interfaces_xlwings(self, archive: bool):
         """Create user interfaces using xlwings. estimated time: 3min4s (51files)"""
-        logger.info("[CREATE_INTERFACES] Starting interface creation")
+        if not self.all_ok:
+            return
 
-        # Load collaborators
+        logger.info("[CREATE_INTERFACES] interface creation (xlwings processing mode)")
+
         collaborators = get_collaborators(self.synthese_file)
         if not collaborators:
             logger.info(
                 "[CREATE_INTERFACES] the list of CE is empty."
-                f" Please check 'Gestion_Interfaces' sheet in '{self.synthese_file}'"
-            )
+                f" Please check 'Gestion_Interfaces' sheet in '{self.synthese_file}'")
             return
 
         logger.info(f"[CREATE_INTERFACES] Found {len(collaborators)} collaborators")
 
-        self.check_rm_archive()
+        if archive:
+            self.check_roadmap_archive()
 
         for collab in tqdm(collaborators, desc="Creating interfaces", total=len(collaborators)):
             target_path = self.rm_folder / f"RM_{collab}.xlsx"
@@ -188,60 +223,40 @@ class RoadmapManager:
 
         logger.info("[CREATE_INTERFACES] creation done.")
 
-    def update_lc(self):
-        """Function 2: Update conditional lists (LC) in all personal tools"""
-        logger.info("[UPDATE_LC] Starting LC update process")
-
-        synthese_wb = load_workbook(self.synthese_file)
-        lc_sheet = synthese_wb["LC"]
-
-        lc_data = []
-        for row in lc_sheet.iter_rows(min_row=3, max_row=10000, min_col=2, max_col=234):
-            row_data = [cell.value for cell in row]
-            if all(cell is None for cell in row_data):
-                break
-            lc_data.append(row_data)
-
-        synthese_wb.close()
-
-        logger.info(f"[UPDATE_LC] Loaded {len(lc_data)} rows of LC data")
-
-        self._update_lc_in_file(self.template_file, lc_data)
-
-        if self.rm_folder.exists():
-            for rm_file in self.rm_folder.glob("*.xlsx"):
-                if rm_file.name.startswith("~$"):
-                    continue
-                self._update_lc_in_file(rm_file, lc_data)
-
-        logger.info("[UPDATE_LC] LC update completed")
-
-    def _update_lc_in_file(self, file_path, lc_data):
-        logger.info(f"[UPDATE_LC] Updating {file_path.name}")
-
-        wb = load_workbook(file_path)
-
-        if "LC" not in wb.sheetnames:
-            logger.warning(f"[UPDATE_LC] LC sheet not found in {file_path.name}")
-            wb.close()
+    def delete_interfaces(self, archive: bool):
+        """Move RM_Collaborateurs into Deleted/ with timestamp, or archive normally."""
+        if not self.all_ok:
             return
 
-        lc_sheet = wb["LC"]
+        logger.info("[DELETE_INTERFACES] Starting interface deletion")
 
-        for row in lc_sheet.iter_rows(min_row=3, max_row=lc_sheet.max_row):
-            for cell in row:
-                if cell.column >= 2:
-                    cell.value = None
+        rm_folder = self.rm_folder
 
-        for row_idx, row_data in enumerate(lc_data, start=3):
-            for col_idx, value in enumerate(row_data, start=2):
-                lc_sheet.cell(row=row_idx, column=col_idx, value=value)
+        if not rm_folder.exists():
+            logger.warning("[DELETE_INTERFACES] RM_Collaborateurs folder does not exist")
+            return
 
-        wb.save(file_path)
-        wb.close()
+        rm_count = sum(1 for f in rm_folder.glob("*.xlsx") if f.is_file())
+
+        if archive:
+            rm_folder = self.check_roadmap_archive()
+            logger.info(f"[DELETE_INTERFACES] Archived {rm_count} interface file(s) to {rm_folder.name}")
+
+        try:
+            target_path = self.deleted_folder / f"Deleted_RM_Collaborateurs_{datetime.now().strftime('%d%m%Y_%H%M%S')}"
+            if rm_count != 0:
+                shutil.copytree(rm_folder, target_path)
+                logger.info(f"[DELETE_INTERFACES] Deleted & Moved {rm_count} interface file(s) to {target_path.name}")
+
+        except Exception as e:
+            logger.error(f"[DELETE_INTERFACES] Error while moving folder: {e}")
+            return
 
     def pointage(self, collaborator_file):
         """Export pointage data from collaborator file to synthesis"""
+        if not self.all_ok:
+            return
+
         logger.info(f"[POINTAGE] Processing {collaborator_file}")
 
         collab_wb = load_workbook(collaborator_file)
@@ -296,76 +311,89 @@ class RoadmapManager:
         logger.info(f"[POINTAGE] Successfully exported {len(data_to_export)} rows")
         return True
 
-    def delete_interfaces(self, archive=True):
-        """Function 4: Delete all interfaces (optionally archive them)"""
-        logger.info("[DELETE_INTERFACES] Starting interface deletion")
-
-        if not self.rm_folder.exists():
-            logger.warning("[DELETE_INTERFACES] RM_Collaborateurs folder does not exist")
+    def update_lc(self):
+        """Function 2: Update conditional lists (LC) in all personal tools"""
+        if not self.all_ok:
             return
 
-        deleted_count = 0
-        for rm_file in self.rm_folder.glob("*.xlsx"):
-            if rm_file.name.startswith("~$"):
-                continue
+        logger.info("[UPDATE_LC] Starting LC update process")
 
-            if archive:
-                archive_name = f"Archive_{rm_file.name}"
-                archive_path = self.rm_folder / archive_name
-                logger.info(f"[DELETE_INTERFACES] Archiving {rm_file.name} -> {archive_name}")
-                rm_file.rename(archive_path)
-            else:
-                logger.info(f"[DELETE_INTERFACES] Deleting {rm_file.name}")
-                rm_file.unlink()
+        synthese_wb = load_workbook(self.synthese_file)
+        lc_sheet = synthese_wb["LC"]
 
-            deleted_count += 1
+        lc_data = []
+        for row in lc_sheet.iter_rows(min_row=3, max_row=10000, min_col=2, max_col=234):
+            row_data = [cell.value for cell in row]
+            if all(cell is None for cell in row_data):
+                break
+            lc_data.append(row_data)
 
-        logger.info(f"[DELETE_INTERFACES] Processed {deleted_count} files")
+        synthese_wb.close()
+
+        logger.info(f"[UPDATE_LC] Loaded {len(lc_data)} rows of LC data")
+
+        self._update_lc_in_file(self.template_file, lc_data)
+
+        if self.rm_folder.exists():
+            for rm_file in self.rm_folder.glob("*.xlsx"):
+                if rm_file.name.startswith("~$"):
+                    continue
+                self._update_lc_in_file(rm_file, lc_data)
+
+        logger.info("[UPDATE_LC] LC update completed")
+
+    def _update_lc_in_file(self, file_path, lc_data):
+        logger.info(f"[UPDATE_LC] Updating {file_path.name}")
+
+        wb = load_workbook(file_path)
+
+        if "LC" not in wb.sheetnames:
+            logger.warning(f"[UPDATE_LC] LC sheet not found in {file_path.name}")
+            wb.close()
+            return
+
+        lc_sheet = wb["LC"]
+
+        for row in lc_sheet.iter_rows(min_row=3, max_row=lc_sheet.max_row):
+            for cell in row:
+                if cell.column >= 2:
+                    cell.value = None
+
+        for row_idx, row_data in enumerate(lc_data, start=3):
+            for col_idx, value in enumerate(row_data, start=2):
+                lc_sheet.cell(row=row_idx, column=col_idx, value=value)
+
+        wb.save(file_path)
+        wb.close()
 
 
 def main():
     """Main entry point with CLI argument parser"""
-    parser = argparse.ArgumentParser(
-        description="RoadMap CLI",
-        usage="roadmap <command>",
-    )
+    if platform.system() == "Windows":
+        BASE_DIR = Path(r"C:\Users\Consultant\OneDrive - IKOSCONSULTING\test_RM\files")
+    else:
+        BASE_DIR = Path("/mnt/c/Users/Consultant/OneDrive - IKOSCONSULTING/test_RM/files")
 
-    subparsers = parser.add_subparsers(dest="action", required=True)
-    subparsers.add_parser("create", help="Create interfaces (create user tools)")
-    subparsers.add_parser("update", help="Update LC (Update conditional lists)")
-
-    pointage_parser = subparsers.add_parser("pointage", help="Pointage (Export time tracking)")
-    pointage_parser.add_argument(
-        "--choice",
-        type=valid_choice,
-        default=-1,
-        help="Specify a number (int) for a specific file index (default '-1' for all files)"
-    )
-
-    delete_parser = subparsers.add_parser("delete", help="Delete interfaces (Remove all user tools)")
-    delete_parser.add_argument(
-        "--archive",
-        choices=["yes", "no"],
-        required=True,
-        help="Archive files instead of deleting them ('yes' to archive, 'no' to delete permanently)"
-    )
-    delete_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force deletion without confirmation prompt"
-    )
-
-    args = parser.parse_args()
-    manager = RoadmapManager()
+    args = get_parser().parse_args()
+    manager = RoadmapManager(base_dir=BASE_DIR if args.basedir == 'none' else Path(args.basedir))
 
     if args.action == "create":
-        # manager.create_interfaces()
-        manager.create_interfaces_fast()
-        # manager.create_interfaces_xlwings()
+        if args.way == 'normal':
+            manager.create_interfaces(args.archive)
+        elif args.way == 'para':
+            manager.create_interfaces_fast(args.archive)
+        elif args.way == 'xlw':
+            manager.create_interfaces_xlwings(args.archive)
+        else:
+            logger.error(f"Unknown '--way' argument '{args.way}'. Valid choices are 'normal', 'para', and 'xlw'.")
         return
 
-    if args.action == "update":
-        manager.update_lc()
+    if args.action == "delete":
+        if not args.force:
+            logger.warning("⚠️  Operation not confirmed. Use --force to proceed.")
+            return
+
+        manager.delete_interfaces(archive=args.archive)
         return
 
     if args.action == "pointage":
@@ -402,12 +430,8 @@ def main():
 
         return
 
-    if args.action == "delete":
-        if not args.force:
-            logger.warning("⚠️  Operation not confirmed. Use --force to proceed.")
-            return
-
-        manager.delete_interfaces(archive=args.archive == "yes")
+    if args.action == "update":
+        manager.update_lc()
         return
 
     if args.action == 'exit':

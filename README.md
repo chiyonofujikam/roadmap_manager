@@ -44,13 +44,13 @@ Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as tim
 
 Run the CLI tool using any of the following methods:
 
-### Option 1 — via `uv`:
+### Option 1 — via `uv`
 
 ```bash
 uv run roadmap <command> [options]
 ```
 
-### Option 2 — via virtual environment:
+### Option 2 — via virtual environment
 
 ```bash
 source .venv/bin/activate   # (Windows: .venv\Scripts\activate)
@@ -63,12 +63,19 @@ roadmap <command> [options]
 
 ### Available Functions
 
+#### 0. Base directory
+
+```bash
+roadmap --basedir [BASEDIR] <command>
+```
+
 #### 1. Pointage (Time Tracking Export)
-- Exports time tracking data from collaborator files to the central synthesis
-- Copies data from range A4:KX in the POINTAGE sheet
-- Appends data to SYNTHESE sheet in Synthèse_RM_CE_VHST.xlsx
-- Clears the POINTAGE sheet after export
-- Includes header verification
+
+* Exports time tracking data from collaborator files to the central synthesis
+* Copies data from range A4:KX in the POINTAGE sheet
+* Appends data to SYNTHESE sheet in Synthèse_RM_CE_VHST.xlsx
+* Clears the POINTAGE sheet after export
+* Includes header verification
 
 ```bash
 roadmap pointage [--choice N]
@@ -89,11 +96,12 @@ roadmap pointage --choice 3
 ```
 
 #### 2. Update LC (Conditional Lists)
-- Updates conditional lists across all personal tools
-- Copies LC data (B3:IX) from Synthèse_RM_CE_VHST.xlsx
-- Updates the template file (RM_NOM Prénom.xlsx)
-- Updates all files in RM_Collaborateurs folder
-- Preserves sheet structure and formulas
+
+* Updates conditional lists across all personal tools
+* Copies LC data (B3:IX) from Synthèse_RM_CE_VHST.xlsx
+* Updates the template file (RM_NOM Prénom.xlsx)
+* Updates all files in RM_Collaborateurs folder
+* Preserves sheet structure and formulas
 
 ```bash
 roadmap update
@@ -105,12 +113,13 @@ roadmap update
 * Updates both **RM_NOM Prénom.xlsx** (template) and all files under `RM_Collaborateurs`
 
 #### 3. Create Interfaces (Creation)
-- Creates personal tools for all collaborators listed in LC sheet
-- Reads collaborator names from column B (starting row 3) in LC sheet
-- Duplicates template file for each missing collaborator
-- Names files as: RM_[COLLABORATOR_NAME].xlsx
-- Sets collaborator name in cell B1 of POINTAGE sheet
-- Protects POINTAGE sheet
+
+* Creates personal tools for all collaborators listed in LC sheet
+* Reads collaborator names from column B (starting row 3) in LC sheet
+* Duplicates template file for each missing collaborator
+* Names files as: RM_[COLLABORATOR_NAME].xlsx
+* Sets collaborator name in cell B1 of POINTAGE sheet
+* Protects POINTAGE sheet
 
 ```bash
 roadmap create
@@ -122,56 +131,67 @@ roadmap create
 * Creates missing `RM_[Name].xlsx` files under `RM_Collaborateurs`
 * Sets `POINTAGE!B1` to collaborator name and enables sheet protection
 
-
 #### 4. Delete Interfaces
-- Removes all files from RM_Collaborateurs folder
-- Option to archive (rename with "Archive_" prefix) instead of deleting
-- Confirmation required before execution
+
+* Removes all files from RM_Collaborateurs folder
+* Option to archive (rename with "Archive_" prefix) instead of deleting
+* Confirmation required before execution
 
 ```bash
-roadmap delete --archive {yes|no} [--force]
+roadmap delete --archive [--force]
 ```
 
 **Options:**
 
-* `--archive yes` → Archives files (renames with `Archive_` prefix)
-* `--archive no` → Deletes files permanently
+* `--archive` → Archives files (renames with `Archive_` prefix)
+* no `--archive` → Deletes files permanently
 * `--force` → Required to actually perform the operation (safety mechanism)
 
 **Examples:**
 
 ```bash
 # Archive all files
-roadmap delete --archive yes --force
+roadmap delete --archive --force
 
 # Permanently delete all files
-roadmap delete --archive no --force
+roadmap delete --force
 
 # Dry run (no --force)
-roadmap delete --archive yes
+roadmap delete --archive
 ```
 
 ---
 
 ## 📁 Folder Structure
 
-```
+```text
 project_root/
-├── README.md
-├── roadmap
-│   ├── __init__.py
-│   └── main.py                         # CLI entry point
-├── files
-│   ├── RM_Collaborateurs
-│   │   ├── RM_CAUSIT Arnauld.xlsx
-│   │   └── RM_GRANSARD Ugo.xlsx
-│   ├── RM_NOM Prénom.xlsx
-│   └── Synthèse_RM_CE_VHST.xlsx
-├── pyproject.toml
-└── uv.lock
+│   .gitignore
+│   .python-version
+│   pyproject.toml
+│   README.md
+│   uv.lock
+│   
+├───.logs
+│       roadmap.log
+│
+├───roadmap
+│       helpers.py
+│       main.py                  # CLI entry point
+│       __init__.py
+│
+├───scripts
+│       data_validation_list.py
+│       rm.xlsx
+│       test.py
+│
+└───tests
+        test_cli.py
+        test_helpers.py
 ```
 
 ---
+
 ## 🏁 Example Workflow
 
 ```bash
@@ -185,5 +205,5 @@ roadmap update
 roadmap create
 
 # Delete or archive all collaborator files (requires --force)
-roadmap delete --archive yes --force
+roadmap delete --archive --force
 ```
