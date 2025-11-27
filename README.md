@@ -12,7 +12,6 @@ Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as tim
 * **Interface Deletion or Archiving**: Safely remove or archive all user files.
 * **Header Verification** and **Data Integrity Checks** ensure accuracy.
 * **CLI-based** — fully automatable and compatible with scripts or cron jobs.
-
 ---
 
 ## ⚙️ Prerequisites
