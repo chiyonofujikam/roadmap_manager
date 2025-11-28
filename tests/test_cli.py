@@ -1,6 +1,6 @@
 import pytest
 
-from roadmap.main import get_parser
+from roadmap.helpers import get_parser
 
 
 def test_cli_create_normal():
