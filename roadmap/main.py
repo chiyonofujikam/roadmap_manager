@@ -12,61 +12,60 @@ The module integrates with Excel files using openpyxl and xlwings, and can be ca
 Author: Mustapha EL KAMILI
 """
 import platform
-import tempfile
-
 import shutil
+import sys
+import tempfile
+import time
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
 import xlwings as xw
 from openpyxl import load_workbook
-from openpyxl.worksheet.datavalidation import DataValidation
 from tqdm import tqdm
 
-from .helpers import (add_validation_list, build_interface, get_collaborators,
-                      get_parser, logger, write_xml)
-
-app = xw.App(visible=False)
+from roadmap.helpers import (add_data_validations_to_sheet, add_validation_list, app,
+                              build_interface, get_collaborators, get_parser, logger,
+                              write_xml, zip_folder, rmtree_with_retry)
 
 
 class RoadmapManager:
     """
-        Manages roadmap interfaces and data for CE VHST collaborators.
+    Manages roadmap interfaces and data for CE VHST collaborators.
 
-        This class handles the creation, deletion, and management of Excel-based roadmap interfaces.
-        It coordinates between the master synthesis file, template files, and individual collaborator files.
+    This class handles the creation, deletion, and management of Excel-based roadmap interfaces.
+    It coordinates between the master synthesis file, template files, and individual collaborator files.
 
-        Attributes:
-            base_path (Path): Base directory path for all roadmap files.
-            synthese_file (Path): Path to the master synthesis Excel file.
-            template_file (Path): Path to the template Excel file.
-            rm_folder (Path): Directory containing collaborator interface files.
-            archived_folder (Path): Directory for archived files.
-            deleted_folder (Path): Directory for deleted files.
-            xml_output (Path): Path for pointage XML export file.
-            all_ok (bool): Flag indicating if all required files exist.
+    Attributes:
+        base_path (Path): Base directory path for all roadmap files.
+        synthese_file (Path): Path to the master synthesis Excel file.
+        template_file (Path): Path to the template Excel file.
+        rm_folder (Path): Directory containing collaborator interface files.
+        archived_folder (Path): Directory for archived files.
+        deleted_folder (Path): Directory for deleted files.
+        xml_output (Path): Path for pointage XML export file.
+        all_ok (bool): Flag indicating if all required files exist.
 
-        Example:
-            >>> manager = RoadmapManager(base_dir="/path/to/roadmap")
-            >>> manager.create_interfaces(archive=True)
-            >>> manager.pointage()
+    Example:
+        >>> manager = RoadmapManager(base_dir="/path/to/roadmap")
+        >>> manager.create_interfaces(archive=True)
+        >>> manager.pointage()
     """
 
     def __init__(self, base_dir: str | Path):
         """
-            Initialize RoadmapManager with base directory.
+        Initialize RoadmapManager with base directory.
 
-            Sets up all necessary paths and validates that required files exist.
-            Creates necessary directories if they don't exist.
+        Sets up all necessary paths and validates that required files exist.
+        Creates necessary directories if they don't exist.
 
-            Args:
-                base_dir (str | Path): Base directory path containing roadmap files.
-                    Should contain 'Synthèse_RM_CE.xlsm' and 'RM_template.xlsx'.
+        Args:
+            base_dir (str | Path): Base directory path containing roadmap files.
+                Should contain 'Synthèse_RM_CE.xlsm' and 'RM_template.xlsx'.
 
-            Note:
-                Logs an error if required files are missing, but continues initialization.
-                Check `all_ok` attribute before operations.
+        Note:
+            Logs an error if required files are missing, but continues initialization.
+            Check `all_ok` attribute before operations.
         """
         self.base_path = Path(base_dir)
 
@@ -94,24 +93,33 @@ class RoadmapManager:
 
     def check_roadmap_archive(self) -> Path:
         """
-            Archive existing 'RM_Collaborateurs' folder if it contains files.
+        Archive existing 'RM_Collaborateurs' folder if it contains files.
 
-            Moves the existing 'RM_Collaborateurs' folder to the Archived directory with a timestamped name.
-            If the folder doesn't exist or is empty, creates a new empty folder.
+        Zips the existing 'RM_Collaborateurs' folder and saves it to the Archived directory with a timestamped name.
+        If the folder doesn't exist or is empty, creates a new empty folder.
 
-            Returns:
-                Path: Path to the archived folder (if archived) or the new
-                    'RM_Collaborateurs' folder (if empty/non-existent).
+        Returns:
+            Path: Path to the archived zip file (if archived) or the new
+                'RM_Collaborateurs' folder (if empty/non-existent).
 
-            Note:
-                Only archives if there are .xlsx files in the folder.
+        Note:
+            Only archives if there are .xlsx files in the folder.
         """
         if self.rm_folder.exists():
             rm_count = sum(1 for f in self.rm_folder.glob("*.xlsx") if f.is_file())
-            path_rm = self.archived_folder / f"Archive_RM_Collaborateurs_{datetime.now():%d%m%Y_%H%M%S}"
+            zip_path = self.archived_folder / f"Archive_RM_Collaborateurs_{datetime.now():%d%m%Y_%H%M%S}.zip"
             if rm_count != 0:
-                shutil.move(self.rm_folder, path_rm)
-            return path_rm
+                zip_folder(self.rm_folder, zip_path)
+
+                # Remove the original folder after zipping (with retry for OneDrive/Windows locks)
+                if not rmtree_with_retry(self.rm_folder):
+                    logger.warning("[CHECK_ROADMAP_ARCHIVE] Could not remove original folder, but archive was created")
+                else:
+                    logger.info(f"[CHECK_ROADMAP_ARCHIVE] Archived {rm_count} interface file(s) to {zip_path.name}")
+                
+                # Recreate the folder for new interfaces
+                self.rm_folder.mkdir(exist_ok=True)
+                return zip_path
 
         self.rm_folder.mkdir(exist_ok=True)
         return self.rm_folder
@@ -166,9 +174,9 @@ class RoadmapManager:
                     executor.submit(build_interface, template_bytes, output_path, collab)
                 )
 
-            for _ in tqdm(futures, desc="Creating interfaces (parallel)"):
+            for future in tqdm(futures, desc="Creating interfaces (parallel)"):
                 try:
-                    _.result()
+                    future.result()
                 except Exception as e:
                     logger.error(f"error: {e}")
 
@@ -176,19 +184,19 @@ class RoadmapManager:
 
     def create_interfaces(self, archive: bool) -> None:
         """
-            Create user interfaces using sequential processing with openpyxl.
+        Create user interfaces using sequential processing with openpyxl.
 
-            Creates individual Excel interface files for each collaborator listed in the 'Synthese_RM_CE.xlsm' file.
-            Each interface is based on the template file and includes data validation lists for pointage entry.
+        Creates individual Excel interface files for each collaborator listed in the 'Synthese_RM_CE.xlsm' file.
+        Each interface is based on the template file and includes data validation lists for pointage entry.
 
-            Args:
-                archive (bool): If True, archives existing 'RM_Collaborateurs' folder before creating new interfaces.
+        Args:
+            archive (bool): If True, archives existing 'RM_Collaborateurs' folder before creating new interfaces.
 
-            Returns:
-                None: Returns early if required files are missing or no collaborators found.
+        Returns:
+            None: Returns early if required files are missing or no collaborators found.
 
-            Note:
-                Estimated time: ~50s for 51 files. For faster processing, use 'create_interfaces_fast()' instead.
+        Note:
+            Estimated time: ~50s for 51 files. For faster processing, use 'create_interfaces_fast()' instead.
         """
         if not self.all_ok:
             return
@@ -221,23 +229,8 @@ class RoadmapManager:
             # Write collaborator name
             ws_pointage["B1"].value = collab
 
-            # Create validations
-            dv_semaine = DataValidation(type="list", formula1="='POINTAGE'!$A$2:$A$2")
-            dv_cle = DataValidation(type="list", formula1="='LC'!$B$3:$B$10000")
-            dv_libelle = DataValidation(type="list", formula1="='LC'!$C$3:$C$10000")
-            dv_fonction = DataValidation(type="list", formula1="='LC'!$D$3:$D$10000")
-
-            # Assign validation ranges
-            validations = [
-                (dv_semaine, 'D'),
-                (dv_cle, 'E'),
-                (dv_libelle, 'F'),
-                (dv_fonction, 'G'),
-            ]
-
-            for dv, col in validations:
-                ws_pointage.add_data_validation(dv)
-                dv.ranges.add(f"{col}3:{col}1000")
+            # Add data validations
+            add_data_validations_to_sheet(ws_pointage, start_row=3)
 
             wb.save(target)
             wb.close()
@@ -246,20 +239,20 @@ class RoadmapManager:
 
     def create_interfaces_xlwings(self, archive: bool) -> None:
         """
-            Create user interfaces using xlwings library.
+        Create user interfaces using xlwings library.
 
-            Uses xlwings for Excel automation, which provides better integration with Excel's native features but is slower than openpyxl.
-            Useful when you need Excel to be running or for VBA integration scenarios.
+        Uses xlwings for Excel automation, which provides better integration with Excel's native features but is slower than openpyxl.
+        Useful when you need Excel to be running or for VBA integration scenarios.
 
-            Args:
-                archive (bool): If True, archives existing 'RM_Collaborateurs' folder before creating new interfaces.
+        Args:
+            archive (bool): If True, archives existing 'RM_Collaborateurs' folder before creating new interfaces.
 
-            Returns:
-                None: Returns early if required files are missing or no collaborators found.
+        Returns:
+            None: Returns early if required files are missing or no collaborators found.
 
-            Note:
-                Estimated time: ~3min4s for 51 files. This is the slowest method.
-                    Prefer 'create_interfaces()' or 'create_interfaces_fast()' unless xlwings-specific features are required.
+        Note:
+            Estimated time: ~3min4s for 51 files. This is the slowest method.
+                Prefer 'create_interfaces()' or 'create_interfaces_fast()' unless xlwings-specific features are required.
         """
         if not self.all_ok:
             return
@@ -322,20 +315,20 @@ class RoadmapManager:
 
     def delete_interfaces(self, archive: bool) -> None:
         """
-            Delete or archive all collaborator interface files.
+        Delete or archive all collaborator interface files.
 
-            Moves the 'RM_Collaborateurs' folder to the 'Deleted' directory with a timestamped name.
-            Optionally archives the folder first before deletion.
+        Zips the 'RM_Collaborateurs' folder and saves it to the 'Deleted' directory with a timestamped name.
+        Optionally archives the folder first before deletion.
 
-            Args:
-                archive (bool): If True, archives the folder to 'Archived' directory before moving to 'Deleted' directory.
-                    If False, moves directly to 'Deleted' folder.
+        Args:
+            archive (bool): If True, archives the folder to 'Archived' directory before moving to 'Deleted' directory.
+                If False, moves directly to 'Deleted' folder.
 
-            Returns:
-                None: Returns early if required files are missing or folder doesn't exist.
+        Returns:
+            None: Returns early if required files are missing or folder doesn't exist.
 
-            Note:
-                This operation is destructive. Files are copied (not moved) to 'Deleted' folder, preserving originals if archive=True.
+        Note:
+            This operation is destructive. Files are zipped and saved to 'Deleted' folder, preserving originals if archive=True.
         """
         if not self.all_ok:
             return
@@ -343,7 +336,6 @@ class RoadmapManager:
         logger.info("[DELETE_INTERFACES] Starting interface deletion")
 
         rm_folder = self.rm_folder
-
         if not rm_folder.exists():
             logger.warning("[DELETE_INTERFACES] RM_Collaborateurs folder does not exist")
             return
@@ -351,34 +343,48 @@ class RoadmapManager:
         rm_count = sum(1 for f in rm_folder.glob("*.xlsx") if f.is_file())
 
         if archive:
-            rm_folder = self.check_roadmap_archive()
-            logger.info(f"[DELETE_INTERFACES] Archived {rm_count} interface file(s) to {rm_folder.name}")
+            archived_path = self.check_roadmap_archive()
+            logger.info(f"[DELETE_INTERFACES] Archived {rm_count} interface file(s) to {archived_path.name}")
+
+            # Copy the archived zip to Deleted folder (if it's a zip file)
+            try:
+                target_zip = self.deleted_folder / f"Deleted_RM_Collaborateurs_{datetime.now().strftime('%d%m%Y_%H%M%S')}.zip"
+                if rm_count != 0 and archived_path.exists() and archived_path.suffix == '.zip':
+                    shutil.copy2(archived_path, target_zip)
+                    logger.info(f"[DELETE_INTERFACES] Deleted & Moved {rm_count} interface file(s) to {target_zip.name}")
+                    return
+            except Exception as e:
+                logger.error(f"[DELETE_INTERFACES] Error while copying zip file: {e}")
+                return
 
         try:
-            target_path = self.deleted_folder / f"Deleted_RM_Collaborateurs_{datetime.now().strftime('%d%m%Y_%H%M%S')}"
+            target_zip = self.deleted_folder / f"Deleted_RM_Collaborateurs_{datetime.now().strftime('%d%m%Y_%H%M%S')}.zip"
             if rm_count != 0:
-                shutil.copytree(rm_folder, target_path)
-                logger.info(f"[DELETE_INTERFACES] Deleted & Moved {rm_count} interface file(s) to {target_path.name}")
+                zip_folder(rm_folder, target_zip)
 
+                # Remove the original folder after zipping
+                shutil.rmtree(rm_folder)
+                logger.info(f"[DELETE_INTERFACES] Deleted & Moved {rm_count} interface file(s) to {target_zip.name}")
+                return
         except Exception as e:
-            logger.error(f"[DELETE_INTERFACES] Error while moving folder: {e}")
+            logger.error(f"[DELETE_INTERFACES] Error while zipping folder: {e}")
             return
 
     def pointage(self) -> bool:
         """
-            Export pointage (time tracking) data from collaborator files to XML.
+        Export pointage (time tracking) data from collaborator files to XML.
 
-            Reads time tracking data from all collaborator Excel files in the 'RM_Collaborateurs' folder and exports it to a single XML file.
-            The XML format is designed to be consumed by VBA macros in Excel.
+        Reads time tracking data from all collaborator Excel files in the 'RM_Collaborateurs' folder and exports it to a single XML file.
+        The XML format is designed to be consumed by VBA macros in Excel.
 
-            Reads data from the 'POINTAGE' sheet, starting at row 4, columns A-K.
-            Stops reading when encountering a fully empty row.
+        Reads data from the 'POINTAGE' sheet, starting at row 4, columns A-K.
+        Stops reading when encountering a fully empty row.
 
-            Returns:
-                bool: True if data was exported, False if no data found or operation failed. Always creates XML file (empty if no data).
+        Returns:
+            bool: True if data was exported, False if no data found or operation failed. Always creates XML file (empty if no data).
 
-            Note:
-                Creates an empty XML file if no data exists, as VBA expects the file to be present. Skips temporary Excel files (starting with '~$').
+        Note:
+            Creates an empty XML file if no data exists, as VBA expects the file to be present. Skips temporary Excel files (starting with '~$').
         """
         if not self.all_ok:
             return False
@@ -428,219 +434,268 @@ class RoadmapManager:
 
         return True
 
-    def pointage_archive(self) -> bool:
-        """
-            Archive the 'SYNTHESE' sheet from the 'Synthese_RM_CE.xlsm' file.
-
-            Creates a timestamped archive file containing only the 'SYNTHESE' and 'LC' sheets.
-            Uses a temporary file approach to safely handle cases where the source XLSM file may be open in Excel.
-
-            The archive is saved as an XLSX file (without VBA macros) in the 'Archived' directory.
-
-            Returns:
-                bool: True if archive was created successfully, False otherwise.
-
-            Note:
-                This method safely handles open Excel files by copying to a temporary location first.
-                VBA macros are stripped in the 'archive_path' file.
-        """
-        if not self.all_ok:
-            return False
-
-        logger.info("[POINTAGE_ARCHIVE] Starting pointage archive process")
-
-        # Archive file path
-        archive_path = self.archived_folder / f"Archive_SYNTHESE_{datetime.now():%d%m%Y_%H%M%S}.xlsx"
-
-        # Use temporary file to safely copy the open XLSM
-        with tempfile.NamedTemporaryFile(delete=False, suffix=self.synthese_file.suffix) as tmp:
-            temp_path = Path(tmp.name)
-
-        # Copy original file to temporary location
-        shutil.copy2(self.synthese_file, temp_path)
-
-        try:
-            # Step 1: Load in read-only mode → strips VBA
-            read_only_wb = load_workbook(temp_path, data_only=True, read_only=True)
-            read_only_wb.close()
-
-            # Step 2: Reload normally → clean workbook without macros
-            wb = load_workbook(temp_path)
-
-            # Step 3: Keep only SYNTHESE sheet
-            for sheet in wb.sheetnames:
-                if sheet not in ("SYNTHESE", "LC"):
-                    wb.remove(wb[sheet])
-
-            # Step 4: Save as XLSX archive
-            wb.save(archive_path)
-            wb.close()
-
-            logger.info(f"[POINTAGE_ARCHIVE] Archive successfully created → {archive_path}")
-
-        finally:
-            temp_path.unlink(missing_ok=True)
-
-        logger.info("[POINTAGE_ARCHIVE] Pointage archive process completed")
-        return True
-
     def update_lc(self) -> None:
         """
-            Update conditional lists (LC) in 'RM_template.xlsx' and all collaborator interface files.
+        Update conditional lists (LC) in 'RM_template.xlsx' and all collaborator interface files.
 
-            Reads LC data from the 'Synthese_RM_CE.xlsm' file and updates the 'LC' sheet in the 'RM_template.xlsx' file and all collaborator interface files.
-            This ensures all files have synchronized dropdown list options for data entry.
+        Reads LC data from the 'Synthese_RM_CE.xlsm' file and updates the 'LC' sheet in the 'RM_template.xlsx' file and all collaborator interface files.
+        This ensures all files have synchronized dropdown list options for data entry.
 
-            Reads LC data from columns B-I (columns 2-9), starting at row 2. Updates cell values while preserving formatting.
+        Reads LC data from columns B-I (columns 2-9), starting at row 2. Updates cell values while preserving formatting.
 
-            Returns:
-                None: Returns early if required files are missing.
+        Returns:
+            None: Returns early if required files are missing.
 
-            Note:
-                Updates both the template file and all files in 'RM_Collaborateurs' folder. Skips temporary Excel files (starting with '~$').
+        Note:
+            Updates both the template file and all files in 'RM_Collaborateurs' folder. Skips temporary Excel files (starting with '~$').
         """
         if not self.all_ok:
+            logger.error("[UPDATE_LC] Required files are missing. Cannot proceed.")
             return
 
         logger.info("[UPDATE_LC] Starting LC update process")
 
-        # Use temporary file to safely copy the open XLSM
-        with tempfile.NamedTemporaryFile(delete=False, suffix=self.synthese_file.suffix) as tmp:
-            temp_path = Path(tmp.name)
-
-        # Copy original file to temporary location
-        shutil.copy2(self.synthese_file, temp_path)
-
-        synthese_wb = load_workbook(temp_path, data_only=True, read_only=True)
-        lc_sheet = synthese_wb["LC"]
-
+        # Read LC data from SYNTHESE file
+        # Try openpyxl first (faster, doesn't require Excel to be running)
+        # Fall back to xlwings only if file is open
         lc_data = []
-        for row in lc_sheet.iter_rows(min_row=2, min_col=2, max_col=9):
-            row_data = [cell.value for cell in row]
-            if all(cell is None for cell in row_data):
-                break
-            lc_data.append(row_data)
+        source_wb = None
+        opened_source = False
 
-        synthese_wb.close()
+        try:
+            # First try openpyxl (faster and more reliable)
+            try:
+                logger.info("[UPDATE_LC] Attempting to read LC data using openpyxl...")
+                synthese_wb = load_workbook(self.synthese_file, read_only=True, data_only=True)
+                lc_sheet = synthese_wb["LC"]
 
-        logger.info(f"[UPDATE_LC] Loaded LC data successfully")
+                # Read data from columns B-I (columns 2-9), starting at row 2
+                for row in lc_sheet.iter_rows(min_row=2, min_col=2, max_col=9):
+                    row_data = [cell.value for cell in row]
 
-        self._update_lc_in_file(self.template_file, lc_data)
+                    # Stop if all cells in the row are None/empty
+                    if all(cell is None for cell in row_data):
+                        break
 
+                    lc_data.append(row_data)
+
+                synthese_wb.close()
+                logger.info(f"[UPDATE_LC] Loaded {len(lc_data)} rows of LC data using openpyxl")
+
+            except PermissionError:
+                # File is open - use xlwings to read from it
+                logger.info("[UPDATE_LC] File is open, attempting to read using xlwings...")
+                try:
+                    # Try to connect if already open (with timeout handling)
+                    try:
+                        source_wb = xw.Book(str(self.synthese_file))
+                        opened_source = False
+                        logger.info("[UPDATE_LC] Connected to open Excel file")
+                    except Exception as connect_err:
+                        # If connection fails, try opening it
+                        logger.info(f"[UPDATE_LC] Connection failed, opening file: {connect_err}")
+                        source_wb = app.books.open(str(self.synthese_file))
+                        opened_source = True
+
+                    # Read LC data directly from the open file using xlwings
+                    lc_sheet = source_wb.sheets["LC"]
+
+                    # Read data from columns B-I (columns 2-9), starting at row 2
+                    row = 2
+                    while True:
+                        # Read a row from columns B to I (2 to 9)
+                        row_data = []
+                        for col in range(2, 10):  # Columns B-I
+                            try:
+                                cell_value = lc_sheet.range((row, col)).value
+                                row_data.append(cell_value)
+                            except Exception as cell_err:
+                                logger.warning(f"[UPDATE_LC] Error reading cell ({row}, {col}): {cell_err}")
+                                row_data.append(None)
+
+                        # Stop if all cells in the row are None/empty
+                        if all(cell is None for cell in row_data):
+                            break
+
+                        lc_data.append(row_data)
+                        row += 1
+
+                        # Safety limit to prevent infinite loops
+                        if row > 10000:
+                            logger.warning("[UPDATE_LC] Reached safety limit of 10000 rows, stopping")
+                            break
+
+                    logger.info(f"[UPDATE_LC] Loaded {len(lc_data)} rows of LC data using xlwings")
+
+                except Exception as xlw_err:
+                    logger.error(f"[UPDATE_LC] Error reading SYNTHESE file with xlwings: {xlw_err}")
+                    raise
+
+            except Exception as e:
+                logger.error(f"[UPDATE_LC] Error reading SYNTHESE file: {e}")
+                raise
+
+        except Exception as e:
+            logger.error(f"[UPDATE_LC] Failed to read LC data from SYNTHESE file: {e}. Please ensure the SYNTHESE file exists and is accessible")
+            return
+        finally:
+            # Only close if we opened it (don't close if user has it open)
+            if opened_source and source_wb:
+                try:
+                    source_wb.close()
+                except Exception as close_err:
+                    logger.warning(f"[UPDATE_LC] Error closing workbook: {close_err}")
+
+        if not lc_data:
+            logger.warning("[UPDATE_LC] No LC data found. Nothing to update.")
+            return
+
+        # Update template file
+        logger.info("[UPDATE_LC] Updating template file...")
+        try:
+            self._update_lc_in_file(self.template_file, lc_data)
+        except Exception as e:
+            logger.error(f"[UPDATE_LC] Error updating template file: {e}")
+
+        # Update all collaborator files
         if self.rm_folder.exists():
-            for rm_file in self.rm_folder.glob("*.xlsx"):
-                if rm_file.name.startswith("~$"):
-                    continue
-                self._update_lc_in_file(rm_file, lc_data)
+            rm_files = list(self.rm_folder.glob("*.xlsx"))
+            rm_files = [f for f in rm_files if not f.name.startswith("~$")]
+            logger.info(f"[UPDATE_LC] Updating {len(rm_files)} collaborator files...")
+
+            for rm_file in rm_files:
+                try:
+                    self._update_lc_in_file(rm_file, lc_data)
+                except Exception as e:
+                    logger.error(f"[UPDATE_LC] Error updating {rm_file.name}: {e}")
+                    # Continue with other files even if one fails
 
         logger.info("[UPDATE_LC] LC update completed")
 
-        # Clean up temporary file
-        temp_path.unlink(missing_ok=True)
-
     def _update_lc_in_file(self, file_path: Path, lc_data: list) -> None:
         """
-            Update 'LC' sheet in a single Excel file.
+        Update 'LC' sheet in a single Excel file.
 
-            Private helper method that updates the 'LC' (conditional lists) sheet in a given Excel file with new data from the 'Synthese_RM_CE.xlsm' file.
+        Private helper method that updates the 'LC' (conditional lists) sheet in a given Excel file with new data from the 'Synthese_RM_CE.xlsm' file.
 
-            Args:
-                file_path (Path): Path to the Excel file to update.
-                lc_data (list): List of row data to write to the 'LC' sheet. Each row is a list of cell values.
+        Args:
+            file_path (Path): Path to the Excel file to update.
+            lc_data (list): List of row data to write to the 'LC' sheet. Each row is a list of cell values.
 
-            Returns:
-                None: Logs warning and returns early if 'LC' sheet not found.
+        Returns:
+            None: Logs warning and returns early if 'LC' sheet not found.
 
-            Note:
-                Updates cell values only, preserving all formatting (colors, borders, fonts, etc.).
-                For collaborator files (RM_*.xlsx), recreates data validation lists in POINTAGE sheet
-                exactly as they would be created in create_interfaces(), ensuring consistency.
-                Existing data in the file is preserved - only the LC sheet and data validation are updated.
-                Clears cells beyond the new data range to remove old data.
+        Note:
+            Updates cell values only, preserving all formatting (colors, borders, fonts, etc.).
+            For collaborator files (RM_*.xlsx), recreates data validation lists in POINTAGE sheet
+            exactly as they would be created in create_interfaces(), ensuring consistency.
+            Existing data in the file is preserved - only the LC sheet and data validation are updated.
+            Clears cells beyond the new data range to remove old data.
+            Uses xlwings to handle files that may be open in Excel.
         """
+        # Create temporary file for working copy
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            temp_path = Path(tmp.name)
 
-        # Load workbook - use data_only=False to preserve formulas and data validation
-        wb = load_workbook(file_path, data_only=False)
+        wb = None
 
-        if "LC" not in wb.sheetnames:
-            logger.warning(f"[UPDATE_LC] LC sheet not found in {file_path.name}")
-            wb.close()
-            return
-
-        lc_sheet = wb["LC"]
-
-        # Update cells with new data (preserves formatting by only updating values)
-        for row_idx, row in enumerate(lc_sheet.iter_rows(min_row=2, min_col=2, max_col=9), start=2):
-            if row_idx - 2 >= len(lc_data):
-                for cell in row:
-                    if cell.column >= 2:
-                        cell.value = None
-                continue
-
-            row_data = lc_data[row_idx - 2]
-            for cell in row:
-                col_idx = cell.column - 2
-                if col_idx < len(row_data):
-                    cell.value = row_data[col_idx]
-                else:
-                    cell.value = None
-
-        # Recreate data validation lists for collaborator files (same as create_interfaces())
-        # This ensures consistent validation regardless of file state
-        is_collab_file = file_path.name.startswith("RM_") or "RM_Collaborateurs" in str(file_path.parent)
-
-        if is_collab_file and "POINTAGE" in wb.sheetnames:
-            ws_pointage = wb["POINTAGE"]
+        try:
+            # Try to copy the file using shutil (works if file is not open)
+            # If file is open, this will fail - user needs to save and close it first
             try:
-                # Ensure data_validations object exists
-                if not hasattr(ws_pointage, 'data_validations') or ws_pointage.data_validations is None:
-                    from openpyxl.worksheet.datavalidation import DataValidationList
-                    ws_pointage.data_validations = DataValidationList()
-
-                # Clear existing validations to avoid duplicates
-                if hasattr(ws_pointage.data_validations, 'dataValidation'):
-                    ws_pointage.data_validations.dataValidation = []
-
-                # Create standard data validation lists exactly as in create_interfaces()
-                logger.info(f"[UPDATE_LC] Recreating data validation lists for collaborator file {file_path.name}")
-                dv_semaine = DataValidation(type="list", formula1="='POINTAGE'!$A$2:$A$2")
-                dv_cle = DataValidation(type="list", formula1="='LC'!$B$3:$B$10000")
-                dv_libelle = DataValidation(type="list", formula1="='LC'!$C$3:$C$10000")
-                dv_fonction = DataValidation(type="list", formula1="='LC'!$D$3:$D$10000")
-
-                validations = [
-                    (dv_semaine, 'D'),
-                    (dv_cle, 'E'),
-                    (dv_libelle, 'F'),
-                    (dv_fonction, 'G'),
-                ]
-
-                for dv, col in validations:
-                    ws_pointage.add_data_validation(dv)
-                    dv.ranges.add(f"{col}3:{col}1000")
-
-                logger.info(f"[UPDATE_LC] Successfully recreated data validation lists in {file_path.name}")
+                shutil.copy2(file_path, temp_path)
+            except PermissionError:
+                logger.warning(f"[UPDATE_LC] Cannot update {file_path.name} - it may be open in Excel. Skipping this file.")
+                return
             except Exception as e:
-                logger.error(f"[UPDATE_LC] Error recreating data validation in {file_path.name}: {e}")
+                logger.warning(f"[UPDATE_LC] Error copying {file_path.name}: {e}. Skipping this file.")
+                return
 
-        wb.save(file_path)
-        wb.close()
+            # Load workbook from temp file - use data_only=False to preserve formulas and data validation
+            wb = load_workbook(temp_path, data_only=False)
+
+            if "LC" not in wb.sheetnames:
+                logger.warning(f"[UPDATE_LC] LC sheet not found in {file_path.name}")
+                wb.close()
+                return
+
+            lc_sheet = wb["LC"]
+
+            # Update cells with new data (preserves formatting by only updating values)
+            for row_idx, row in enumerate(lc_sheet.iter_rows(min_row=2, min_col=2, max_col=9), start=2):
+                if row_idx - 2 >= len(lc_data):
+                    for cell in row:
+                        if cell.column >= 2:
+                            cell.value = None
+                    continue
+
+                row_data = lc_data[row_idx - 2]
+                for cell in row:
+                    col_idx = cell.column - 2
+                    if col_idx < len(row_data):
+                        cell.value = row_data[col_idx]
+                    else:
+                        cell.value = None
+
+            # Recreate data validation lists for collaborator files (same as create_interfaces())
+            # This ensures consistent validation regardless of file state
+            is_collab_file = file_path.name.startswith("RM_") or "RM_Collaborateurs" in str(file_path.parent)
+
+            if is_collab_file and "POINTAGE" in wb.sheetnames:
+                ws_pointage = wb["POINTAGE"]
+                try:
+                    logger.info(f"[UPDATE_LC] Recreating data validation lists for collaborator file {file_path.name}")
+                    add_data_validations_to_sheet(ws_pointage, start_row=3)
+                    logger.info(f"[UPDATE_LC] Successfully recreated data validation lists in {file_path.name}")
+                except Exception as e:
+                    logger.error(f"[UPDATE_LC] Error recreating data validation in {file_path.name}: {e}")
+
+            # Save modified workbook to temp file
+            wb.save(temp_path)
+            wb.close()
+            wb = None
+
+            # Small delay to ensure file handle is released
+            time.sleep(0.1)
+
+            # Copy modified temp file back to original location
+            # This works even if the original file is open (we overwrite it)
+            shutil.copy2(temp_path, file_path)
+
+        except Exception as e:
+            logger.error(f"[UPDATE_LC] Error updating LC in {file_path.name}: {e}")
+            # Don't raise - allow other files to be processed
+            return
+        finally:
+            # Clean up temporary file
+            if temp_path.exists():
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        temp_path.unlink()
+                        break
+                    except (PermissionError, OSError):
+                        if attempt < max_retries - 1:
+                            time.sleep(0.2)
+                        else:
+                            logger.warning(f"[UPDATE_LC] Could not delete temporary file {temp_path}, but operation completed successfully")
+
 
 def main() -> None:
     """
-        Main entry point for CLI interface.
+    Main entry point for CLI interface.
 
-        Parses command-line arguments and executes the appropriate RoadmapManager operation.
-        Supports 'create', 'delete', 'pointage', and 'update' commands.
+    Parses command-line arguments and executes the appropriate RoadmapManager operation.
+    Supports 'create', 'delete', 'pointage', and 'update' commands.
 
-        Default base directory is platform-specific:
-            - Windows: 'C:\\Users\\MustaphaELKAMILI\\OneDrive - IKOSCONSULTING\\test_RM\\files'
-            - Other: '/mnt/c/Users/MustaphaELKAMILI/OneDrive - IKOSCONSULTING/test_RM/files'
+    Default base directory is platform-specific:
+        - Windows: 'C:\\Users\\MustaphaELKAMILI\\OneDrive - IKOSCONSULTING\\test_RM\\files'
+        - Other: '/mnt/c/Users/MustaphaELKAMILI/OneDrive - IKOSCONSULTING/test_RM/files'
 
-        Can be overridden with '--basedir' argument.
+    Can be overridden with '--basedir' argument.
 
-        Returns:
-            None
+    Returns:
+        None
     """
     if platform.system() == "Windows":
         BASE_DIR = Path(r"C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files")
@@ -670,32 +725,29 @@ def main() -> None:
         return
 
     if args.action == "pointage":
-        if args.delete:
-            manager.pointage_archive()
-            return
-
         manager.pointage()
         return
 
     if args.action == "update":
-        manager.update_lc()
-        return
-
-    if args.action == 'exit':
-        return
+        try:
+            manager.update_lc()
+        except Exception as e:
+            logger.error(f"Fatal error in update_lc: {e}", exc_info=True)
+            sys.exit(1)
 
 
 def run() -> None:
     """
-        Entry point for console script installation.
+    Entry point for console script installation.
 
-        This function is called when the 'roadmap' command is invoked from the command line.
-        It's registered as a console script in 'pyproject.toml'.
+    This function is called when the 'roadmap' command is invoked from the command line.
+    It's registered as a console script in 'pyproject.toml'.
 
-        Returns:
-            None
+    Returns:
+        None
     """
     main()
+
 
 if __name__ == "__main__":
     main()

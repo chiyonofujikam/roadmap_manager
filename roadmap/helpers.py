@@ -11,50 +11,155 @@ This module provides utility functions for:
 Author: Mustapha ELKAMILI
 """
 import argparse
+import zipfile
+import stat
+import time
 import io
 import logging
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
 import xlwings as xw
 from openpyxl import load_workbook
-from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.datavalidation import DataValidation, DataValidationList
 import xml.etree.ElementTree as ET
 
+# Global xlwings app instance (moved here to avoid circular imports)
+app = xw.App(visible=False)
 
-os.makedirs(os.path.join(os.getcwd(), ".logs"), exist_ok=True)
+def get_exe_dir() -> Path:
+    """
+    Determine the directory where the executable/script is located.
+    
+    Returns:
+        Path: The directory where the executable/script is located.
+    """
+    # sys.argv[0] contains the path to the script/executable that was invoked
+    # This works for both .exe launchers and regular Python scripts
+    script_path = Path(sys.argv[0]).resolve()
+
+    # Check if sys.argv[0] points to an .exe file
+    if script_path.suffix.lower() == '.exe' and script_path.exists():
+        # Running as an .exe file (even if it's a launcher script), Use the directory where the .exe file is located
+        exe_dir = script_path.parent
+    elif getattr(sys, 'frozen', False):
+        # Running as a frozen/packaged executable
+        exe_dir = Path(sys.executable).parent.resolve()
+    else:
+        # Running as a Python script - use the script's directory
+        # If __file__ is available, use it; otherwise fall back to script's directory
+        try:
+            exe_dir = Path(__file__).parent.parent.resolve()  # Go up from helpers.py to roadmap/ to project root
+        except NameError:
+            exe_dir = script_path.parent
+
+    # Create .logs directory in the same directory as the executable
+    logs_dir = exe_dir / ".logs"
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        # Verify the directory was created
+        if not logs_dir.exists():
+            raise OSError(f"Failed to create logs directory: {logs_dir}")
+    except (OSError, PermissionError):
+        # If we can't create in exe directory, fall back to current working directory
+        logs_dir = Path.cwd() / ".logs"
+        try:
+            logs_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Last resort: use temp directory
+            logs_dir = Path(tempfile.gettempdir()) / "roadmap_logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+
+    return str(logs_dir / "roadmap.log")
 
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(".logs/roadmap.log", mode="a", encoding="utf-8"),
+        logging.FileHandler(get_exe_dir(), mode="a", encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
+def zip_folder(folder_path: Path, zip_path: Path) -> None:
+    """
+    Create a zip archive of a folder.
+
+    Args:
+        folder_path (Path): Path to the folder to zip.
+        zip_path (Path): Path where the zip file should be created.
+
+    Returns:
+        None
+
+    Note:
+        Creates a zip file containing all files and subdirectories from the source folder.
+        Preserves the folder structure within the zip archive, including the folder name itself.
+    """
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file_path in folder_path.rglob('*'):
+            if not file_path.is_file():
+                continue
+            # Preserve folder structure: include folder name in zip
+            # e.g., if folder_path is "RM_Collaborateurs", zip will contain "RM_Collaborateurs/file.xlsx"
+            arcname = file_path.relative_to(folder_path.parent)
+            zipf.write(file_path, arcname)
+
+def rmtree_with_retry(folder_path: Path, max_retries: int = 5) -> bool:
+    """
+    Remove a directory tree with retry logic for Windows/OneDrive locks.
+
+    Args:
+        folder_path (Path): Path to the folder to remove.
+        max_retries (int): Maximum number of retry attempts.
+
+    Returns:
+        bool: True if removal succeeded, False otherwise.
+    """
+    def on_rm_error(func, path, exc_info):
+        """Error handler for shutil.rmtree to handle read-only files."""
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except Exception:
+            pass
+
+    for attempt in range(max_retries):
+        try:
+            shutil.rmtree(folder_path, onerror=on_rm_error)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"[RMTREE] Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in 2s...")
+                time.sleep(2)
+            else:
+                logger.error(f"[RMTREE] Failed to remove folder after {max_retries} attempts: {e}")
+                return False
+    return False
+
 def write_xml(rows: list, xml_output: Path) -> None:
     """
-        Write data rows to XML file in format expected by VBA.
+    Write data rows to XML file in format expected by VBA.
 
-        Creates an XML file with a structure that VBA can easily parse. Each row
-        becomes a <row> element containing <col1>, <col2>, etc. child elements.
+    Creates an XML file with a structure that VBA can easily parse. Each row
+    becomes a <row> element containing <col1>, <col2>, etc. child elements.
 
-        Args:
-            rows (list): List of row data, where each row is a list of values.
-                None values are converted to empty strings.
-            xml_output (Path): Path where the XML file should be written.
+    Args:
+        rows (list): List of row data, where each row is a list of values.
+            None values are converted to empty strings.
+        xml_output (Path): Path where the XML file should be written.
 
-        Returns:
-            None
+    Returns:
+        None
 
-        Example:
-            >>> rows = [["Alice", 100], ["Bob", 200]]
-            >>> write_xml(rows, Path("output.xml"))
-            Creates XML with two <row> elements.
+    Example:
+        >>> rows = [["Alice", 100], ["Bob", 200]]
+        >>> write_xml(rows, Path("output.xml"))
+        Creates XML with two <row> elements.
     """
     root = ET.Element("rows")
 
@@ -67,113 +172,123 @@ def write_xml(rows: list, xml_output: Path) -> None:
     tree = ET.ElementTree(root)
     tree.write(xml_output, encoding="utf-8", xml_declaration=True)
 
-def valid_choice(value: str) -> int:
+
+def add_data_validations_to_sheet(ws_pointage, start_row: int = 3) -> None:
     """
-        Validate and convert CLI argument to integer.
+    Add standard data validation lists to POINTAGE sheet.
 
-        Used as a type validator for argparse to ensure choice arguments are valid integers.
+    Creates data validation lists for columns D (week), E (key), F (label), and G (function).
+    This function centralizes the validation creation logic used across multiple methods.
 
-        Args:
-            value (str): String value to convert to integer.
+    Args:
+        ws_pointage: openpyxl worksheet object for the POINTAGE sheet.
+        start_row (int, optional): Starting row for validation ranges. Defaults to 3.
 
-        Returns:
-            int: The integer value of the input string.
-
-        Raises:
-            argparse.ArgumentTypeError: If value cannot be converted to integer.
-
-        Example:
-            >>> valid_choice("5")
-            5
-            >>> valid_choice("abc")
-            ArgumentTypeError: Invalid choice: abc. Must be an integer.
+    Returns:
+        None
     """
-    try:
-        ivalue = int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"Invalid choice: {value}. Must be an integer.")
-    return ivalue
+    # Clear existing validations to avoid duplicates
+    if hasattr(ws_pointage, 'data_validations') and ws_pointage.data_validations is not None:
+        if hasattr(ws_pointage.data_validations, 'dataValidation'):
+            ws_pointage.data_validations.dataValidation = []
+    else:
+        ws_pointage.data_validations = DataValidationList()
 
-def get_collaborators(
-    synthese_file: Path | str,
-    sheet_name: str = "Gestion_Interfaces",
-    min_row: int = 3,
-    min_col: int = 2,
-    max_col: int = 2) -> list[str]:
+    # Create standard data validation lists
+    dv_semaine = DataValidation(type="list", formula1="='POINTAGE'!$A$2:$A$2")
+    dv_cle = DataValidation(type="list", formula1="='LC'!$B$3:$B$10000")
+    dv_libelle = DataValidation(type="list", formula1="='LC'!$C$3:$C$10000")
+    dv_fonction = DataValidation(type="list", formula1="='LC'!$D$3:$D$10000")
+
+    validations = [
+        (dv_semaine, 'D'),
+        (dv_cle, 'E'),
+        (dv_libelle, 'F'),
+        (dv_fonction, 'G'),
+    ]
+
+    for dv, col in validations:
+        ws_pointage.add_data_validation(dv)
+        dv.ranges.add(f"{col}{start_row}:{col}1000")
+
+def get_collaborators(synthese_file: Path | str) -> list[str]:
     """
-        Extract collaborator names from synthesis Excel file.
+    Extract collaborator names from XML file.
 
-        Reads collaborator names from a specified sheet and column in the
-        synthesis file. Uses a temporary copy to avoid file locking issues.
-        Stops reading when encountering an empty cell.
+    Reads from collabs.xml file in the base directory to avoid permission errors.
+    The XML file is deleted after reading.
 
-        Args:
-            synthese_file (Path | str): Path to the synthesis Excel file.
-            sheet_name (str, optional): Name of the sheet containing collaborator
-                list. Defaults to "Gestion_Interfaces".
-            min_row (int, optional): Starting row number. Defaults to 3.
-            min_col (int, optional): Column number to read from (1-indexed).
-                Defaults to 2 (column B).
-            max_col (int, optional): Ending column number. Defaults to 2.
+    Args:
+        synthese_file (Path | str): Path to the synthesis Excel file (used as base
+            directory to locate collabs.xml).
 
-        Returns:
-            list[str]: List of collaborator names, stripped of whitespace.
-            Returns empty list if file cannot be read or sheet not found.
+    Returns:
+        list[str]: List of collaborator names, stripped of whitespace.
+        Returns empty list if XML file cannot be read or doesn't exist.
 
-        Note:
-            Creates a temporary copy of the file to avoid locking issues with open Excel files.
-            The temporary file is deleted after reading.
+    Note:
+        The collabs.xml file will be deleted after reading.
     """
     collabs = []
     synthese_file = Path(synthese_file)
 
+    # Check if collabs.xml exists in the same directory as synthese_file
+    xml_file = synthese_file.parent / "collabs.xml"
+
+    if not xml_file.exists():
+        logger.info(f"[GET_COLLABORATORS] collabs.xml file not found: {xml_file}")
+        return collabs
+
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=synthese_file.suffix) as tmp:
-            temp_path = Path(tmp.name)
-        shutil.copy2(synthese_file, temp_path)
-        synthese_wb = load_workbook(temp_path, read_only=True, data_only=True)
+        logger.info(f"[GET_COLLABORATORS] Reading from XML file: {xml_file}")
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
 
-        for row in synthese_wb[sheet_name].iter_rows(
-            min_row=min_row, min_col=min_col, max_col=max_col
-        ):
-            value = row[0].value
-            if not value or str(value).strip() == "":
-                break
-            collabs.append(str(value).strip())
+        for collab_elem in root.findall("collaborator"):
+            collab_name = collab_elem.text
+            if collab_name and collab_name.strip():
+                collabs.append(collab_name.strip())
 
-        synthese_wb.close()
-        temp_path.unlink(missing_ok=True)
+        logger.info(f"[GET_COLLABORATORS] Read {len(collabs)} collaborators from XML")
 
-    except Exception as err:
-        logger.error(f"Error while reading {synthese_file.name}: {err}")
+        # Delete the XML file after reading
+        try:
+            xml_file.unlink()
+            logger.info(f"[GET_COLLABORATORS] Deleted XML file: {xml_file}")
+        except Exception as del_err:
+            logger.warning(f"[GET_COLLABORATORS] Could not delete XML file: {del_err}")
+
+        return collabs
+    except Exception as xml_err:
+        logger.error(f"[GET_COLLABORATORS] Error reading XML file: {xml_err}")
 
     return collabs
 
 def build_interface(template_bytes: bytes, output_path: str, collab_name: str) -> None:
     """
-        Build a single collaborator interface Excel file from template.
+    Build a single collaborator interface Excel file from template.
 
-        Creates a new Excel file for a collaborator based on the template.
-        Sets the collaborator name in cell B1 and adds data validation lists
-        for pointage entry (week, key, label, function).
+    Creates a new Excel file for a collaborator based on the template.
+    Sets the collaborator name in cell B1 and adds data validation lists
+    for pointage entry (week, key, label, function).
 
-        Args:
-            template_bytes (bytes): Binary content of the template Excel file.
-            output_path (str): Path where the new interface file should be saved.
-            collab_name (str): Name of the collaborator to set in the interface.
+    Args:
+        template_bytes (bytes): Binary content of the template Excel file.
+        output_path (str): Path where the new interface file should be saved.
+        collab_name (str): Name of the collaborator to set in the interface.
 
-        Returns:
-            None
+    Returns:
+        None
 
-        Note:
-            This function is designed to be called in parallel processes.
-            It uses bytes instead of file path to avoid file locking issues in parallel execution.
+    Note:
+        This function is designed to be called in parallel processes.
+        It uses bytes instead of file path to avoid file locking issues in parallel execution.
 
-        Data Validation Lists:
-            - Column D: Week (from POINTAGE!A2:A2)
-            - Column E: Key (from LC!B3:B1000)
-            - Column F: Label (from LC!C3:C1000)
-            - Column G: Function (from LC!D3:D1000)
+    Data Validation Lists:
+        - Column D: Week (from POINTAGE!A2:A2)
+        - Column E: Key (from LC!B3:B1000)
+        - Column F: Label (from LC!C3:C1000)
+        - Column G: Function (from LC!D3:D1000)
     """
     wb = load_workbook(filename=io.BytesIO(template_bytes))
     ws_pointage = wb["POINTAGE"]
@@ -181,22 +296,8 @@ def build_interface(template_bytes: bytes, output_path: str, collab_name: str) -
     # Write collaborator name
     ws_pointage["B1"].value = collab_name
 
-    # Create validations
-    dv_semaine = DataValidation(type="list", formula1="='POINTAGE'!$A$2:$A$2")
-    dv_cle = DataValidation(type="list", formula1="='LC'!$B$3:$B$1000")
-    dv_libelle = DataValidation(type="list", formula1="='LC'!$C$3:$C$1000")
-    dv_fonction = DataValidation(type="list", formula1="='LC'!$D$3:$D$1000")
-
-    validations = [
-        (dv_semaine,  'D'),
-        (dv_cle,      'E'),
-        (dv_libelle,  'F'),
-        (dv_fonction, 'G'),
-    ]
-
-    for dv, col in validations:
-        ws_pointage.add_data_validation(dv)
-        dv.ranges.add(f"{col}4:{col}1000")
+    # Add data validations (using row 3 to match other methods)
+    add_data_validations_to_sheet(ws_pointage, start_row=3)
 
     wb.save(output_path)
     wb.close()
@@ -210,34 +311,33 @@ def add_validation_list(
     end_row: int = 1000,
     start_row: int = 4) -> xw.Book:
     """
-        Add data validation list to Excel workbook using xlwings.
+    Add data validation list to Excel workbook using xlwings.
 
-        Applies a dropdown list validation to a column range in Excel.
-        The dropdown options come from a specified range in another sheet.
+    Applies a dropdown list validation to a column range in Excel.
+    The dropdown options come from a specified range in another sheet.
 
-        Args:
-            wb: xlwings Book object representing the Excel workbook.
-            list_range (str): Excel range string (e.g., "B3:B1000") containing
-                the list of valid values.
-            target_column (str): Column letter (e.g., "E") where validation
-                should be applied.
-            dropdown_sheet (str, optional): Name of sheet containing target cells.
-                Defaults to "POINTAGE".
-            list_sheet (str, optional): Name of sheet containing source list.
-                Defaults to "LC".
-            end_row (int, optional): Last row number for validation range.
-                Defaults to 1000.
-            start_row (int, optional): First row number for validation range.
-                Defaults to 4.
+    Args:
+        wb: xlwings Book object representing the Excel workbook.
+        list_range (str): Excel range string (e.g., "B3:B1000") containing
+            the list of valid values.
+        target_column (str): Column letter (e.g., "E") where validation
+            should be applied.
+        dropdown_sheet (str, optional): Name of sheet containing target cells.
+            Defaults to "POINTAGE".
+        list_sheet (str, optional): Name of sheet containing source list.
+            Defaults to "LC".
+        end_row (int, optional): Last row number for validation range.
+            Defaults to 1000.
+        start_row (int, optional): First row number for validation range.
+            Defaults to 4.
 
-        Returns:
-            Book: The modified xlwings Book object.
+    Returns:
+        Book: The modified xlwings Book object.
 
-        Note:
-            Removes any existing validation on the target range before adding new validation.
-            Uses Excel's native Validation API via xlwings.
+    Note:
+        Removes any existing validation on the target range before adding new validation.
+        Uses Excel's native Validation API via xlwings.
     """
-
     # Build source address for formula
     ws_list = wb.sheets[list_sheet]
     source_range = ws_list.range(list_range)
@@ -264,25 +364,25 @@ def add_validation_list(
 
 def get_parser() -> argparse.ArgumentParser:
     """
-        Create and configure CLI argument parser.
+    Create and configure CLI argument parser.
 
-        Sets up argument parser with subcommands for create, delete, pointage, and update operations.
-        Each subcommand has its own specific options.
+    Sets up argument parser with subcommands for create, delete, pointage, and update operations.
+    Each subcommand has its own specific options.
 
-        Returns:
-            argparse.ArgumentParser: Configured argument parser ready to parse command-line arguments.
+    Returns:
+        argparse.ArgumentParser: Configured argument parser ready to parse command-line arguments.
 
-        Commands:
-            - create: Create collaborator interfaces
-                Options: --way (normal/para/xlw), --archive
-            - delete: Delete collaborator interfaces
-                Options: --archive, --force
-            - pointage: Export time tracking data
-                Options: --delete
-            - update: Update conditional lists
+    Commands:
+        - create: Create collaborator interfaces
+            Options: --way (normal/para/xlw), --archive
+        - delete: Delete collaborator interfaces
+            Options: --archive, --force
+        - pointage: Export time tracking data
+            Options: --delete
+        - update: Update conditional lists
 
-        Global Options:
-            --basedir: Base directory for file operations
+    Global Options:
+        --basedir: Base directory for file operations
     """
     parser = argparse.ArgumentParser(
         description="Roadmap Management CLI - Automate CE VHST roadmap operations including time tracking, interface creation, and data synchronization.",
@@ -324,12 +424,7 @@ def get_parser() -> argparse.ArgumentParser:
         help="Required flag to confirm deletion operation. Without this flag, the operation will be aborted with a warning"
     )
 
-    pointage_parser = subparsers_action.add_parser("pointage", help="Export time tracking data from collaborator Excel files to XML format for VBA import")
-    pointage_parser.add_argument(
-        "--delete",
-        action="store_true",
-        help="Archive the SYNTHESE sheet instead of exporting pointage data. Creates a timestamped archive file containing SYNTHESE and LC sheets"
-    )
+    subparsers_action.add_parser("pointage", help="Export time tracking data from collaborator Excel files to XML format for VBA import")
     subparsers_action.add_parser("update", help="Synchronize conditional lists (LC) from master synthesis file to template and all collaborator interface files")
 
     return parser
