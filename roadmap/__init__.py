@@ -18,6 +18,7 @@ Author: Mustapha EL KAMILI
 
 __version__ = "1.0.0"
 
-from roadmap.main import RoadmapManager, main
+from roadmap.roadmap import RoadmapManager
+from roadmap.main import main
 
 __all__ = ["RoadmapManager", "main"]

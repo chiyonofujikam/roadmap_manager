@@ -10,36 +10,73 @@ Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as tim
 * **LC Update**: Updates all conditional lists (LC) across template and collaborator files
 * **Interface Creation**: Automatically generates user Excel interfaces with three processing modes
 * **Interface Deletion or Archiving**: Safely remove or archive all user files with timestamped backups
+* **Cleanup Missing Collaborators**: Automatically removes interface files for collaborators no longer in the list
 * **VBA Integration**: Seamless integration with Excel VBA macros for user-friendly workflows
-* **Parallel Processing**: Fast interface creation using multiprocessing (9s for 51 files)
-* **CLI-based** — fully automatable and compatible with scripts or cron jobs
+* **Parallel Processing**: Fast interface creation using multiprocessing (~9s for 51 files)
+* **CLI-based**: Fully automatable and compatible with scripts or scheduled tasks
 * **Comprehensive Logging**: All operations logged to `.logs/roadmap.log`
+* **Executable Build**: Can be packaged as standalone `.exe` for distribution
 
 ---
 
 ## ⚙️ Prerequisites
 
 * **Python 3.11+**
-* [**uv**](https://github.com/astral-sh/uv) package manager (recommended)
-* **Microsoft Excel** (for VBA integration, optional)
+* [**uv**](https://github.com/astral-sh/uv) package manager (recommended) or pip
+* **Microsoft Excel** (for VBA integration and file operations)
+* **Windows OS** (primary platform, though code may work on other platforms)
 
 ---
 
 ## 🧰 Installation
 
+### Option 1: Using uv (Recommended)
+
 1. Install `uv` (if not installed yet):
 
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
+   # Windows PowerShell:
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
 
-2. Sync dependencies:
+2. Clone or navigate to the project directory:
+
+   ```bash
+   cd roadmap_manager
+   ```
+
+3. Sync dependencies:
 
    ```bash
    uv sync
    ```
 
    This creates a virtual environment and installs required packages automatically.
+
+### Option 2: Using pip
+
+1. Create a virtual environment:
+
+   ```bash
+   python -m venv .venv
+   ```
+
+2. Activate the virtual environment:
+
+   ```bash
+   # Windows
+   .venv\Scripts\activate
+   
+   # Linux/Mac
+   source .venv/bin/activate
+   ```
+
+3. Install dependencies:
+
+   ```bash
+   pip install -e .
+   ```
 
 ---
 
@@ -60,22 +97,39 @@ source .venv/bin/activate   # (Windows: .venv\Scripts\activate)
 roadmap <command> [options]
 ```
 
+### Option 3 — via executable
+
+If you've built the executable (see [Building Executable](#-building-executable)):
+
+```bash
+roadmap.exe <command> [options]
+```
+
 ---
 
 ## 🧠 Commands & Options
 
-### Available Functions
+### Global Options
 
-#### 0. Base directory
+#### Base Directory
 
 ```bash
 roadmap --basedir [BASEDIR] <command>
 ```
 
+Specify the base directory path containing roadmap files. If not provided, uses platform-specific default:
+- **Windows**: `C:\Users\<MustaphaELKAMILI>\OneDrive - IKOSCONSULTING\test_RM\files`
+- **Other**: `/mnt/c/Users/MustaphaELKAMILI/OneDrive - IKOSCONSULTING/test_RM/files`
+
+---
+
+### Available Commands
+
 #### 1. Pointage (Time Tracking Export)
 
 Exports time tracking data from all collaborator Excel files to an XML file that can be imported by VBA macros.
 
+**What it does:**
 * Reads data from `POINTAGE` sheet, starting at row 4, columns A-K (11 columns)
 * Stops reading when encountering a fully empty row
 * Exports to `pointage_output.xml` in the base directory
@@ -83,14 +137,25 @@ Exports time tracking data from all collaborator Excel files to an XML file that
 * Skips temporary Excel files (files starting with `~$`)
 
 ```bash
-roadmap pointage [--delete]
+roadmap pointage
 ```
 
-**Options:**
+**Output:**
 
-* `--delete` → Archive the SYNTHESE sheet instead of exporting pointage data
-  * Creates a timestamped archive file containing only SYNTHESE and LC sheets
-  * Safely handles open Excel files using temporary file approach
+Creates `pointage_output.xml` with structure:
+```xml
+<?xml version='1.0' encoding='utf-8'?>
+<rows>
+  <row>
+    <col1>value1</col1>
+    <col2>value2</col2>
+    <col3>value3</col3>
+    ...
+    <col11>value11</col11>
+  </row>
+  ...
+</rows>
+```
 
 **Examples:**
 
@@ -98,51 +163,54 @@ roadmap pointage [--delete]
 # Export pointage data from all collaborator files
 roadmap pointage
 
-# Archive SYNTHESE sheet
-roadmap pointage --delete
+# With custom base directory
+roadmap --basedir "C:\MyRoadmapFiles" pointage
 ```
 
-**Output:**
-
-Creates `pointage_output.xml` with structure:
-```xml
-<rows>
-  <row>
-    <col1>value1</col1>
-    <col2>value2</col2>
-    ...
-  </row>
-</rows>
-```
+---
 
 #### 2. Update LC (Conditional Lists)
 
 Synchronizes conditional lists (dropdown options) across all Excel files.
 
-* Reads LC data from `Synthèse_RM_CE.xlsm` (columns B-I, starting at row 2)
+**What it does:**
+* Reads LC data from `LC.xlsx` file (generated by VBA `btn_update_LC` button)
+* Reads columns B-I (columns 2-9), starting at row 2
 * Updates the template file (`RM_template.xlsx`)
 * Updates all collaborator interface files in `RM_Collaborateurs` folder
-* Clears existing LC data before writing new data
-* Preserves sheet structure and formulas
+* For collaborator files, recreates data validation lists in POINTAGE sheet (columns D-G)
+* Preserves existing data in collaborator files - only LC sheet and data validation are updated
+* Clears old data beyond the new data range
+* Skips temporary Excel files (files starting with `~$`)
 
 ```bash
 roadmap update
 ```
 
-**Behavior:**
+**Prerequisites:**
+* `LC.xlsx` file must exist in the base directory (created by VBA button)
+* Template and collaborator files must not be open in Excel
 
-* Reads LC data from `LC` sheet in `Synthèse_RM_CE.xlsm`
-* Updates `RM_template.xlsx` (template file)
-* Updates all `RM_[Name].xlsx` files in `RM_Collaborateurs` folder
-* For collaborator files, recreates data validation lists in POINTAGE sheet (columns D-G) to ensure consistency
-* Preserves existing data in collaborator files - only LC sheet and data validation are updated
-* Skips temporary Excel files (files starting with `~$`)
+**Examples:**
 
-#### 3. Create Interfaces (Creation)
+```bash
+# Update conditional lists in all files
+roadmap update
+
+# With custom base directory
+roadmap --basedir "C:\MyRoadmapFiles" update
+```
+
+**Note:** The `LC.xlsx` file is automatically deleted after reading to keep the directory clean.
+
+---
+
+#### 3. Create Interfaces
 
 Creates individual Excel interface files for each collaborator listed in the synthesis file.
 
-* Reads collaborator names from `Gestion_Interfaces` sheet, column B (starting at row 3)
+**What it does:**
+* Reads collaborator names from `collabs.xml` file (created by VBA macros)
 * Creates `RM_[COLLABORATOR_NAME].xlsx` files in `RM_Collaborateurs` folder
 * Sets collaborator name in cell B1 of POINTAGE sheet
 * Adds data validation lists for:
@@ -150,6 +218,7 @@ Creates individual Excel interface files for each collaborator listed in the syn
   - Column E: Key (from LC!B3:B1000)
   - Column F: Label (from LC!C3:C1000)
   - Column G: Function (from LC!D3:D1000)
+* Only creates files that don't already exist (skips existing files)
 
 ```bash
 roadmap create [--way MODE] [--archive]
@@ -177,21 +246,28 @@ roadmap create --archive --way para
 
 # Use xlwings mode for better Excel integration
 roadmap create --way xlw
+
+# With custom base directory
+roadmap --basedir "C:\MyRoadmapFiles" create --way para
 ```
 
-**Behavior:**
+**Prerequisites:**
+* `collabs.xml` file must exist in the base directory (created by VBA macros)
+* Template file (`RM_template.xlsx`) must be closed
+* For parallel mode, template file must be accessible (not locked)
 
-* Reads collaborator names from `Gestion_Interfaces` sheet, column B (starting at row 3)
-* Creates `RM_[Name].xlsx` files under `RM_Collaborateurs` folder
-* Sets `POINTAGE!B1` to collaborator name
-* Adds data validation dropdowns to columns D-G
+**Note:** The `collabs.xml` file is automatically deleted after reading to keep the directory clean.
+
+---
 
 #### 4. Delete Interfaces
 
 Removes or archives all collaborator interface files.
 
+**What it does:**
 * Moves `RM_Collaborateurs` folder to `Deleted` directory with timestamp
 * Optionally archives to `Archived` directory first
+* Creates zip archives with timestamped names
 * **Requires `--force` flag** to prevent accidental deletion
 
 ```bash
@@ -216,11 +292,42 @@ roadmap delete --force
 roadmap delete --archive
 ```
 
-**Behavior:**
+**Archive Structure:**
+* If `--archive` is used: `Archived/Archive_RM_Collaborateurs_[timestamp].zip`
+* Always creates: `Deleted/Deleted_RM_Collaborateurs_[timestamp].zip`
+* Timestamp format: `DDMMYYYY_HHMMSS`
 
-* If `--archive` is used: copies folder to `Archived/Archive_RM_Collaborateurs_[timestamp]`
-* Moves folder to `Deleted/Deleted_RM_Collaborateurs_[timestamp]`
-* Logs count of files processed
+---
+
+#### 5. Cleanup Missing Collaborators
+
+Deletes interface files for collaborators that are missing from the current collaborator list.
+
+**What it does:**
+* Compares existing files in `RM_Collaborateurs` folder with collaborator list from `collabs.xml`
+* If a file exists but the collaborator is not in the XML list, that file is deleted
+* Creates a zip archive of deleted files before deletion
+* Skips temporary Excel files (files starting with `~$`)
+
+```bash
+roadmap cleanup
+```
+
+**Examples:**
+
+```bash
+# Remove interfaces for missing collaborators
+roadmap cleanup
+
+# With custom base directory
+roadmap --basedir "C:\MyRoadmapFiles" cleanup
+```
+
+**Prerequisites:**
+* `collabs.xml` file must exist in the base directory (created by VBA macros)
+
+**Archive:**
+* Creates `Deleted/Deleted_Missing_RM_collaborators_[timestamp].zip` before deletion
 
 ---
 
@@ -231,21 +338,37 @@ roadmap_manager/
 │   .gitignore
 │   pyproject.toml              # Project configuration & dependencies
 │   README.md                   # This file
-│   uv.lock                     # Dependency lock file
-│   VBA_code.bas                # Excel VBA macros for integration
+│   uv.lock                     # Dependency lock file (uv)
+│   roadmap_cli.py              # Entry point for PyInstaller builds
+│   roadmap.spec                # PyInstaller spec file
+│   build_exe.bat               # Batch script to build executable
 │   
-├───.logs/
+├───.logs/                      # Log directory (created automatically)
 │       roadmap.log             # Application logs
 │
 ├───roadmap/                    # Main Python package
 │       __init__.py             # Package initialization
-│       main.py                 # RoadmapManager class & CLI entry point
+│       main.py                 # CLI entry point and argument parsing
+│       roadmap.py              # RoadmapManager class (core logic)
 │       helpers.py              # Utility functions (XML, parsing, validation)
 │
-└───tests/                      # Unit tests
-        test_cli.py             # CLI argument parsing tests
-        test_helpers.py         # Helper function tests
+├───VBA/                        # VBA integration code
+│       modButtonHandlers.bas   # Button click event handlers
+│       modGlobals.bas          # Global constants and variables
+│       modUtilities.bas        # Utility functions for VBA
+│       VBA_code.bas           # Combined VBA code (all modules)
+│
+├───tests/                      # Unit tests
+│       test_cli.py             # CLI argument parsing tests
+│       test_helpers.py         # Helper function tests
+│
+├───build/                      # PyInstaller build artifacts (temporary)
+│
+└───dist/                       # PyInstaller output directory
+        roadmap.exe             # Built executable (if built)
 ```
+
+---
 
 ## 📂 Expected File Structure (Base Directory)
 
@@ -255,45 +378,179 @@ The tool expects the following structure in your base directory:
 base_directory/
 │   Synthèse_RM_CE.xlsm         # Master synthesis file (required)
 │   RM_template.xlsx             # Template file for interfaces (required)
+│   LC.xlsx                      # Temporary file (created by VBA, deleted after use)
+│   collabs.xml                  # Temporary file (created by VBA, deleted after use)
 │   pointage_output.xml          # Generated XML export (created by tool)
 │
 ├───RM_Collaborateurs/           # Collaborator interface files (created by tool)
 │       RM_Alice.xlsx
 │       RM_Bob.xlsx
+│       RM_Charlie.xlsx
 │       ...
 │
 ├───Archived/                    # Archive folder (created by tool)
-│       Archive_RM_Collaborateurs_01012024_120000/
+│       Archive_RM_Collaborateurs_01012024_120000.zip
 │       Archive_SYNTHESE_01012024_120000.xlsx
 │       ...
 │
 └───Deleted/                      # Deleted files folder (created by tool)
-        Deleted_RM_Collaborateurs_01012024_120000/
+        Deleted_RM_Collaborateurs_01012024_120000.zip
+        Deleted_Missing_RM_collaborators_01012024_120000.zip
         ...
 ```
+
+### Required Excel File Structure
+
+**Synthèse_RM_CE.xlsm:**
+* Must contain `Gestion_Interfaces` sheet with collaborator names in column B (starting at row 3)
+* Must contain `LC` sheet with conditional list data (columns B-I, starting at row 2)
+* Must contain `SYNTHESE` sheet for pointage data import
+
+**RM_template.xlsx:**
+* Must contain `POINTAGE` sheet with:
+  - Cell A2: Week value (for dropdown)
+  - Cell B1: Will be set to collaborator name
+  - Columns D-G: Will have data validation lists added
+* Must contain `LC` sheet with conditional list structure
 
 ---
 
 ## 🔌 VBA Integration
 
-The tool integrates seamlessly with Excel VBA macros. The `VBA_code.bas` file contains macros that can be imported into your Excel workbook.
+The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory contains VBA modules that can be imported into your Excel workbook.
 
-### VBA Functions Available:
+### VBA Modules
 
-* `Btn_Create_RM()` - Create interfaces via button click
-* `Btn_Delete_RM()` - Delete interfaces with confirmation dialogs
-* `Btn_Collect_RM_Data()` - Import pointage data from XML to SYNTHESE sheet
-* `Btn_Clear_Synthese()` - Clear SYNTHESE sheet with archiving option
-* `Btn_Update_LC()` - Update conditional lists (LC) in template and all collaborator files
+1. **modGlobals.bas**: Global constants and variables
+   * `PYTHONEXE`: Path to Python executable or roadmap.exe
+   * `GetBaseDir()`: Function to get base directory path
 
-### Setup:
+2. **modUtilities.bas**: Utility functions
+   * `RunCommand()`: Execute shell commands
+   * `CreateCollabsXML()`: Generate collaborator XML from Excel sheet
+   * `CleanupGestionInterfaces()`: Remove empty rows from interface sheet
+   * `ImportXMLToSheet()`: Import XML data to Excel sheet
 
-1. Import `VBA_code.bas` into your Excel workbook
-2. Update `PYTHONEXE` constant in VBA code with your Python executable path
-3. Create buttons/controls linked to the VBA functions
-4. Ensure the base directory path is set correctly
+3. **modButtonHandlers.bas**: Button click event handlers
+   * `Btn_Create_RM()`: Create interfaces via button click
+   * `Btn_Delete_RM()`: Delete interfaces with confirmation dialogs
+   * `Btn_Collect_RM_Data()`: Import pointage data from XML to SYNTHESE sheet
+   * `Btn_Clear_Synthese()`: Clear SYNTHESE sheet with archiving option
+   * `Btn_Update_LC()`: Update conditional lists (LC) in template and all collaborator files
+   * `Btn_Cleanup_Missing()`: Cleanup missing collaborators
 
-The VBA code calls the Python CLI tool and handles Excel-specific operations like importing XML data into worksheets.
+### VBA Setup
+
+1. **Import VBA modules:**
+   * Open Excel workbook (`Synthèse_RM_CE.xlsm`)
+   * Press `Alt + F11` to open VBA Editor
+   * Right-click on your project → Import File
+   * Import all `.bas` files from the `VBA/` directory, or import `VBA_code.bas` (combined version)
+
+2. **Configure Python executable:**
+   * Open `modGlobals.bas`
+   * Update `PYTHONEXE` constant with your Python executable path:
+     ```vba
+     ' If using Python directly:
+     Const PYTHONEXE As String = "C:\Python311\python.exe "
+     
+     ' If using executable:
+     Const PYTHONEXE As String = "C:\path\to\roadmap.exe "
+     
+     ' If using uv:
+     Const PYTHONEXE As String = "uv run roadmap "
+     ```
+
+3. **Create buttons/controls:**
+   * In Excel, go to Developer tab → Insert → Button (Form Control)
+   * Assign macros to buttons:
+     * `Btn_Create_RM` → "Create Interfaces"
+     * `Btn_Delete_RM` → "Delete Interfaces"
+     * `Btn_Collect_RM_Data` → "Collect Pointage Data"
+     * `Btn_Clear_Synthese` → "Clear SYNTHESE"
+     * `Btn_Update_LC` → "Update LC"
+     * `Btn_Cleanup_Missing` → "Cleanup Missing"
+
+4. **Verify base directory:**
+   * Ensure `GetBaseDir()` function returns the correct path
+   * Or modify it to match your file structure
+
+### How VBA Integration Works
+
+1. **VBA creates temporary files:**
+   * `collabs.xml`: List of collaborators from `Gestion_Interfaces` sheet
+   * `LC.xlsx`: Conditional list data from `LC` sheet
+
+2. **VBA calls Python CLI:**
+   * Executes shell command with appropriate arguments
+   * Waits for completion
+
+3. **Python processes files:**
+   * Reads temporary files
+   * Performs operations (create, update, delete, etc.)
+   * Generates output files (e.g., `pointage_output.xml`)
+
+4. **VBA imports results:**
+   * Reads `pointage_output.xml` and imports to `SYNTHESE` sheet
+   * Cleans up temporary files
+
+---
+
+## 🏗️ Building Executable
+
+You can build a standalone executable for distribution without requiring Python installation.
+
+### Prerequisites
+
+* PyInstaller installed: `pip install pyinstaller` or `uv pip install pyinstaller`
+* All dependencies installed
+
+### Build Process
+
+**Option 1: Using build script (Windows)**
+
+```bash
+build_exe.bat
+```
+
+This script:
+* Builds `roadmap.exe` using PyInstaller
+* Copies executable to `dist/roadmap.exe`
+* Optionally copies to a predefined destination directory
+
+**Option 2: Manual build**
+
+```bash
+pyinstaller --onefile \
+    --name roadmap \
+    --console \
+    --clean \
+    --paths . \
+    --hidden-import=roadmap \
+    --hidden-import=roadmap.helpers \
+    --hidden-import=roadmap.main \
+    --hidden-import=roadmap.roadmap \
+    --hidden-import=xlwings \
+    --hidden-import=openpyxl \
+    --hidden-import=tqdm \
+    --collect-all xlwings \
+    roadmap_cli.py
+```
+
+**Output:**
+* Executable: `dist/roadmap.exe`
+* Size: ~50-100 MB (includes Python runtime and all dependencies)
+
+**Usage:**
+```bash
+# Run executable directly
+roadmap.exe create --way para
+
+# Or with full path
+C:\path\to\roadmap.exe pointage
+```
+
+**Note:** The executable is self-contained and doesn't require Python or any dependencies to be installed on the target machine.
 
 ---
 
@@ -305,8 +562,20 @@ All operations are logged to `.logs/roadmap.log` with the following information:
 * File counts and processing status
 * Errors and warnings
 * Performance metrics
+* Detailed error traces
 
-Log format: `%(asctime)s [%(levelname)s] %(message)s`
+**Log format:** `%(asctime)s [%(levelname)s] %(message)s`
+
+**Log location:**
+* If running as script: `.logs/roadmap.log` in project directory
+* If running as executable: `.logs/roadmap.log` next to executable
+* Fallback: System temp directory if write permissions unavailable
+
+**Log levels:**
+* `DEBUG`: Detailed diagnostic information
+* `INFO`: General informational messages
+* `WARNING`: Warning messages (non-critical issues)
+* `ERROR`: Error messages (operations failed)
 
 ---
 
@@ -316,13 +585,13 @@ Log format: `%(asctime)s [%(levelname)s] %(message)s`
 
 ```bash
 # 1. Update conditional lists in all files
-roadmap --basedir /path/to/files update
+roadmap --basedir "C:\MyRoadmapFiles" update
 
 # 2. Create interfaces for all collaborators (parallel mode)
-roadmap --basedir /path/to/files create --way para --archive
+roadmap --basedir "C:\MyRoadmapFiles" create --way para --archive
 
 # 3. Export pointage data
-roadmap --basedir /path/to/files pointage
+roadmap --basedir "C:\MyRoadmapFiles" pointage
 ```
 
 ### Regular Maintenance Workflow
@@ -336,6 +605,9 @@ roadmap update
 
 # Quarterly: Refresh all interfaces
 roadmap create --way para --archive
+
+# Cleanup: Remove interfaces for missing collaborators
+roadmap cleanup
 ```
 
 ### Cleanup Workflow
@@ -344,38 +616,189 @@ roadmap create --way para --archive
 # Archive and delete old interfaces
 roadmap delete --archive --force
 
-# Archive SYNTHESE sheet
-roadmap pointage --delete
+# Remove interfaces for collaborators no longer in list
+roadmap cleanup
 ```
+
+### VBA-Driven Workflow
+
+1. Open `Synthèse_RM_CE.xlsm` in Excel
+2. Click "Update LC" button → Updates all conditional lists
+3. Click "Create Interfaces" button → Creates all collaborator files
+4. Collaborators fill their time tracking in their individual files
+5. Click "Collect Pointage Data" button → Exports and imports all pointage data
+6. Click "Clear SYNTHESE" button → Archives and clears synthesis sheet
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Common Issues:
+### Common Issues
 
 **"Required files missing" error:**
 - Ensure `Synthèse_RM_CE.xlsm` and `RM_template.xlsx` exist in base directory
-- Check file names match exactly (case-sensitive)
+- Check file names match exactly (case-sensitive on some systems)
+- Verify base directory path is correct
 
 **"Template file is opened" error:**
 - Close the template Excel file before running create operations
+- Check if Excel process is still running in background
+- For parallel mode, ensure template file is completely closed
 
 **"No collaborators found" error:**
-- Check `Gestion_Interfaces` sheet exists in synthesis file
-- Verify collaborator names are in column B starting at row 3
+- Check `collabs.xml` file exists in base directory (created by VBA)
+- Verify `Gestion_Interfaces` sheet exists in synthesis file
+- Ensure collaborator names are in column B starting at row 3
+- Check that VBA macro `CreateCollabsXML()` ran successfully
+
+**"LC.xlsx file not found" error:**
+- Ensure VBA button `Btn_Update_LC` was clicked to generate the file
+- Check that `LC` sheet exists in synthesis file
+- Verify base directory path is correct
 
 **VBA integration not working:**
 - Verify Python executable path in `PYTHONEXE` constant
-- Ensure base directory path is correctly set
+- Ensure base directory path is correctly set in `GetBaseDir()`
 - Check that `pointage_output.xml` is generated after pointage command
+- Verify VBA macros are enabled in Excel (File → Options → Trust Center → Macro Settings)
+- Check Windows security settings aren't blocking script execution
+
+**Permission errors:**
+- Ensure Excel files are closed before running operations
+- Check file/folder permissions in base directory
+- Verify you have write access to base directory and subdirectories
+- On OneDrive: Ensure files are synced and not in "Files On-Demand" mode
+
+**Parallel processing issues:**
+- Ensure template file is closed
+- Check available system memory (parallel mode uses more RAM)
+- Reduce `max_workers` parameter if system is slow
+- Fall back to `normal` mode if issues persist
+
+**Log file not created:**
+- Check write permissions in project directory or executable directory
+- Verify disk space is available
+- Check if antivirus is blocking file creation
 
 ---
 
-## 📝 Notes
+## 📝 Technical Details
 
-* The tool uses temporary files to safely handle open Excel files
-* Parallel processing (`--way para`) requires the template file to be closed
-* XML export format is designed specifically for VBA parsing
-* All archive operations create timestamped folders/files
+### Processing Modes Comparison
+
+| Mode | Library | Speed (51 files) | Use Case |
+|------|---------|------------------|----------|
+| `normal` | openpyxl | ~50s | Standard use, reliable |
+| `para` | openpyxl (multiprocessing) | ~9s | Fast batch creation |
+| `xlw` | xlwings | ~3min4s | VBA integration, Excel automation |
+
+### File Handling
+
+* **Temporary files**: `collabs.xml` and `LC.xlsx` are automatically deleted after use
+* **File locking**: Tool uses temporary file approach to handle open Excel files
+* **Retry logic**: Folder deletion includes retry mechanism for Windows/OneDrive locks
+* **Skip patterns**: Automatically skips temporary Excel files (starting with `~$`)
+
+### Data Validation
+
+The tool creates Excel data validation lists for:
+* **Column D**: Week selection (from POINTAGE!A2:A2)
+* **Column E**: Key selection (from LC!B3:B1000)
+* **Column F**: Label selection (from LC!C3:C1000)
+* **Column G**: Function selection (from LC!D3:D1000)
+
+### XML Format
+
+Pointage XML follows this structure:
+```xml
+<?xml version='1.0' encoding='utf-8'?>
+<rows>
+  <row>
+    <col1>Value for column A</col1>
+    <col2>Value for column B</col2>
+    ...
+    <col11>Value for column K</col11>
+  </row>
+</rows>
+```
+
+This format is optimized for VBA parsing using `MSXML2.DOMDocument`.
+
+---
+
+## 🔒 Security Notes
+
+* The tool reads and writes Excel files - ensure files are from trusted sources
+* VBA macros require macro-enabled workbooks (`.xlsm` files)
+* Executable files should be from trusted sources
+* Log files may contain file paths and collaborator names - protect log files appropriately
+
+---
+
+## 📄 License
+
+MIT License - See LICENSE file for details
+
+---
+
+## 👤 Author
+
+**Mustapha ELKAMILI**
+
+---
+
+## 🤝 Contributing
+
+This is a project-specific tool, but suggestions and improvements are welcome. Please ensure any changes maintain compatibility with the existing VBA integration.
+
+---
+
+## 📚 Dependencies
+
+* **openpyxl** (>=3.1.2): Excel file manipulation
+* **xlwings** (>=0.33.16): Excel automation and VBA integration
+* **tqdm** (>=4.67.1): Progress bars
+* **pywin32** (>=306): Windows-specific functionality
+* **pyinstaller** (>=6.17.0): Executable building (optional)
+
+---
+
+## 🔄 Version History
+
+* **v1.0.0**: Initial release
+  * Pointage export functionality
+  * Interface creation with multiple processing modes
+  * LC update functionality
+  * Interface deletion and archiving
+  * Cleanup missing collaborators
+  * VBA integration
+  * Comprehensive logging
+  * Executable build support
+
+---
+
+## 📞 Support
+
+For issues or questions:
+1. Check the troubleshooting section
+2. Review log files in `.logs/roadmap.log`
+3. Verify file structure matches expected format
+4. Ensure all prerequisites are met
+
+---
+
+## 🎯 Future Enhancements
+
+Potential improvements:
+* Support for multiple base directories
+* Configuration file for default settings
+* Web interface for remote management
+* Database backend for data storage
+* Enhanced error recovery mechanisms
+* Performance optimizations
+
+---
+
+**Last Updated**: 2024
+
 * The tool skips temporary Excel files (starting with `~$`)

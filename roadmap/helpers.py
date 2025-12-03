@@ -11,21 +11,22 @@ This module provides utility functions for:
 Author: Mustapha ELKAMILI
 """
 import argparse
-import zipfile
-import stat
-import time
 import io
 import logging
 import os
 import shutil
+import stat
 import sys
 import tempfile
+import time
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 import xlwings as xw
 from openpyxl import load_workbook
-from openpyxl.worksheet.datavalidation import DataValidation, DataValidationList
-import xml.etree.ElementTree as ET
+from openpyxl.worksheet.datavalidation import (DataValidation,
+                                               DataValidationList)
 
 # Global xlwings app instance (moved here to avoid circular imports)
 app = xw.App(visible=False)
@@ -33,7 +34,7 @@ app = xw.App(visible=False)
 def get_exe_dir() -> Path:
     """
     Determine the directory where the executable/script is located.
-    
+
     Returns:
         Path: The directory where the executable/script is located.
     """
@@ -264,6 +265,114 @@ def get_collaborators(synthese_file: Path | str) -> list[str]:
 
     return collabs
 
+def load_lc_excel(base_dir: Path | str) -> list[list]:
+    """
+    Load LC (conditional lists) data from LC.xlsx file.
+
+    Reads LC data from LC.xlsx file in the base directory.
+    Reads columns B-I (columns 2-9) from the LC sheet, starting at row 2.
+
+    Args:
+        base_dir (Path | str): Base directory path where LC.xlsx should be located.
+
+    Returns:
+        list[list]: List of row data, where each row is a list of 8 values (columns B-I).
+        Empty strings are converted to None for Excel compatibility.
+        Returns empty list if Excel file cannot be read or doesn't exist.
+
+    Note:
+        The LC.xlsx file will be deleted after reading.
+    """
+    lc_data = []
+    base_dir = Path(base_dir)
+    excel_file = base_dir / "LC.xlsx"
+
+    if not excel_file.exists():
+        logger.warning(f"[LOAD_LC_EXCEL] LC.xlsx file not found: {excel_file}")
+        return lc_data
+
+    try:
+        logger.info(f"[LOAD_LC_EXCEL] Reading from Excel file: {excel_file}")
+        # Use data_only=False to access cell formatting information
+        wb = load_workbook(excel_file, data_only=False, read_only=True)
+
+        if "LC" not in wb.sheetnames:
+            logger.warning(f"[LOAD_LC_EXCEL] LC sheet not found in {excel_file}")
+            wb.close()
+            return lc_data
+
+        ws = wb["LC"]
+
+        # Use iter_rows for bulk reading (much faster than cell-by-cell)
+        # Read columns B-I (columns 2-9), starting at row 2
+        # Limit to first 10000 rows for safety
+        max_row = max(ws.max_row, 10000)
+
+        for row in ws.iter_rows(min_row=2, max_row=max_row, min_col=2, max_col=9, values_only=False):
+            # Check if row has any non-empty data
+            has_data = False
+            row_data = []
+
+            for cell in row:
+                if cell.value is not None:
+                    from datetime import datetime, date
+                    
+                    # Priority 1: If cell is explicitly formatted as text (@), treat as string
+                    # Even if openpyxl reads it as a date, we want the text representation
+                    if cell.number_format == '@':
+                        # Cell is formatted as text - read as string
+                        # If it's a date object, convert to string preserving format
+                        if isinstance(cell.value, (datetime, date)):
+                            # For dates in text-formatted cells, we need to preserve the display format
+                            # Since VBA already converted to text, this shouldn't happen, but handle it
+                            # Use the cell's internal value converted to string
+                            cell_str = str(cell.value)
+                        else:
+                            cell_str = str(cell.value)
+                    elif isinstance(cell.value, (datetime, date)):
+                        # Cell contains a date/datetime object but is NOT formatted as text
+                        # This shouldn't happen if VBA worked correctly, but handle it
+                        # Format as ISO date to ensure consistency
+                        if isinstance(cell.value, datetime):
+                            cell_str = cell.value.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            cell_str = cell.value.strftime('%Y-%m-%d')
+                    else:
+                        # For non-date values, convert to string normally
+                        cell_str = str(cell.value)
+                    
+                    cell_str = cell_str.strip()
+                    if cell_str:
+                        row_data.append(cell_str)
+                        has_data = True
+                    else:
+                        row_data.append(None)
+                else:
+                    row_data.append(None)
+
+            # Stop if row is empty (assuming data is contiguous)
+            if not has_data:
+                break
+
+            # Add row to data
+            lc_data.append(row_data)
+
+        wb.close()
+        logger.info(f"[LOAD_LC_EXCEL] Loaded {len(lc_data)} rows of LC data from Excel")
+
+        # Delete the Excel file after reading
+        try:
+            excel_file.unlink()
+            logger.info(f"[LOAD_LC_EXCEL] Deleted Excel file: {excel_file}")
+        except Exception as del_err:
+            logger.warning(f"[LOAD_LC_EXCEL] Could not delete Excel file: {del_err}")
+
+        return lc_data
+    except Exception as excel_err:
+        logger.error(f"[LOAD_LC_EXCEL] Error reading Excel file: {excel_err}")
+
+    return lc_data
+
 def build_interface(template_bytes: bytes, output_path: str, collab_name: str) -> None:
     """
     Build a single collaborator interface Excel file from template.
@@ -426,5 +535,6 @@ def get_parser() -> argparse.ArgumentParser:
 
     subparsers_action.add_parser("pointage", help="Export time tracking data from collaborator Excel files to XML format for VBA import")
     subparsers_action.add_parser("update", help="Synchronize conditional lists (LC) from master synthesis file to template and all collaborator interface files")
+    subparsers_action.add_parser("cleanup", help="Delete interface files for collaborators that are missing from the XML list")
 
     return parser

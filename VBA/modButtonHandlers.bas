@@ -8,47 +8,15 @@ Option Explicit
 Sub Btn_Create_RM()
     Dim command As String
     Dim baseDir As String
-    Dim xmlPath As String
-    Dim ws As Worksheet
-    Dim row As Long
-    Dim collabName As String
-    Dim xmlContent As String
-    Dim xmlFile As Integer
+
+    ' Clean up empty rows in Gestion_Interfaces sheet
+    CleanupGestionInterfaces
 
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
 
-    ' Check if Gestion_Interfaces sheet exists
-    On Error Resume Next
-    Set ws = ThisWorkbook.Sheets("Gestion_Interfaces")
-    If Err.Number <> 0 Then
-        MsgBox "Gestion_Interfaces sheet not found.", vbCritical, "Error"
-        Exit Sub
-    End If
-    On Error GoTo 0
-
     ' Create collabs.xml file
-    xmlPath = baseDir & "\collabs.xml"
-    xmlContent = "<?xml version=""1.0"" encoding=""UTF-8""?>" & vbCrLf
-    xmlContent = xmlContent & "<collaborators>" & vbCrLf
-
-    ' Read collaborator names from column B, starting at row 3
-    row = 3
-    Do While True
-        collabName = Trim(ws.Cells(row, 2).value)
-        If collabName = "" Then Exit Do
-
-        xmlContent = xmlContent & "  <collaborator>" & EscapeXML(collabName) & "</collaborator>" & vbCrLf
-        row = row + 1
-    Loop
-
-    xmlContent = xmlContent & "</collaborators>"
-
-    ' Write XML file
-    xmlFile = FreeFile
-    Open xmlPath For Output As #xmlFile
-    Print #xmlFile, xmlContent
-    Close #xmlFile
+    If Not CreateCollabsXML(baseDir) Then Exit Sub
 
     command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " create --archive"
     Application.StatusBar = "Creating collaborator interfaces..."
@@ -174,22 +142,22 @@ Sub Btn_Clear_Synthese()
     For i = newWs.Shapes.Count To 1 Step -1
         newWs.Shapes(i).Delete
     Next i
-    
+
     ' Remove OLEObjects (ActiveX controls) from SYNTHESE sheet
     For i = newWs.OLEObjects.Count To 1 Step -1
         newWs.OLEObjects(i).Delete
     Next i
-    
+
     ' Remove shapes from LC sheet
     For i = newWsLC.Shapes.Count To 1 Step -1
         newWsLC.Shapes(i).Delete
     Next i
-    
+
     ' Remove OLEObjects (ActiveX controls) from LC sheet
     For i = newWsLC.OLEObjects.Count To 1 Step -1
         newWsLC.OLEObjects(i).Delete
     Next i
-    
+
     ' Delete all default sheets (they have generic names like "Sheet1")
     Set sheetNamesToDelete = New Collection
 
@@ -199,7 +167,7 @@ Sub Btn_Clear_Synthese()
             sheetNamesToDelete.Add sht.Name
         End If
     Next sht
-    
+
     ' Delete collected sheets
     For Each sheetName In sheetNamesToDelete
         newWb.Sheets(sheetName).Delete
@@ -290,10 +258,40 @@ Sub Btn_Update_LC()
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
 
+    ' Create LC.xlsx file from LC sheet
+    If Not CreateLCExcel(baseDir) Then Exit Sub
+
     command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " update"
     Application.StatusBar = "Updating conditional lists (LC) in all files..."
     RunCommand command
     Application.StatusBar = False
 
     MsgBox "LC successfully updated in template and all collaborator files.", vbInformation, "Update Complete"
+End Sub
+
+Sub Btn_Cleanup_RM()
+    Dim command As String
+    Dim baseDir As String
+    Dim confirmation As VbMsgBoxResult
+
+    ' Clean up empty rows in Gestion_Interfaces sheet
+    CleanupGestionInterfaces
+
+    confirmation = MsgBox("Do you want to proceed with cleaning up missing collaborators?" & vbCrLf & _
+                          "This will delete interface files for collaborators not in the current list.", _
+                          vbYesNo + vbQuestion, "Confirm Cleanup")
+    If confirmation = vbNo Then Exit Sub
+
+    baseDir = GetBaseDir()
+    If baseDir = "" Then Exit Sub
+
+    ' Create collabs.xml file
+    If Not CreateCollabsXML(baseDir) Then Exit Sub
+
+    command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " cleanup"
+    Application.StatusBar = "Cleaning up missing collaborator interfaces..."
+    RunCommand command
+    Application.StatusBar = False
+
+    MsgBox "Cleanup complete. Missing collaborator interfaces have been deleted.", vbInformation, "Cleanup Complete"
 End Sub
