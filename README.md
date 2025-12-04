@@ -1,10 +1,10 @@
 # Roadmap Management Tool
 
-Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as time tracking, LC updates, and interface creation management.
+Automation tool for managing **CE Roadmaps** streamlining tasks such as time tracking, LC updates, and interface creation management.
 
 ---
 
-## 🧩 Features
+## Features
 
 * **Pointage Automation**: Exports collaborator time tracking data to XML format for VBA import
 * **LC Update**: Updates all conditional lists (LC) across template and collaborator files
@@ -19,18 +19,16 @@ Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as tim
 
 ---
 
-## ⚙️ Prerequisites
+## Prerequisites
 
 * **Python 3.11+**
-* [**uv**](https://github.com/astral-sh/uv) package manager (recommended) or pip
+* [**uv**](https://github.com/astral-sh/uv) package manager
 * **Microsoft Excel** (for VBA integration and file operations)
 * **Windows OS** (primary platform, though code may work on other platforms)
 
 ---
 
-## 🧰 Installation
-
-### Option 1: Using uv (Recommended)
+## Installation
 
 1. Install `uv` (if not installed yet):
 
@@ -50,64 +48,23 @@ Automation tool for managing **CE VHST Roadmaps** streamlining tasks such as tim
 
    ```bash
    uv sync
+   .venv\Scripts\activate
    ```
 
    This creates a virtual environment and installs required packages automatically.
 
-### Option 2: Using pip
-
-1. Create a virtual environment:
-
-   ```bash
-   python -m venv .venv
-   ```
-
-2. Activate the virtual environment:
-
-   ```bash
-   # Windows
-   .venv\Scripts\activate
-   
-   # Linux/Mac
-   source .venv/bin/activate
-   ```
-
-3. Install dependencies:
-
-   ```bash
-   pip install -e .
-   ```
-
 ---
 
-## ▶️ Usage
+## Usage
 
 Run the CLI tool using any of the following methods:
-
-### Option 1 — via `uv`
 
 ```bash
 uv run roadmap <command> [options]
 ```
-
-### Option 2 — via virtual environment
-
-```bash
-source .venv/bin/activate   # (Windows: .venv\Scripts\activate)
-roadmap <command> [options]
-```
-
-### Option 3 — via executable
-
-If you've built the executable (see [Building Executable](#-building-executable)):
-
-```bash
-roadmap.exe <command> [options]
-```
-
 ---
 
-## 🧠 Commands & Options
+## Commands & Options
 
 ### Global Options
 
@@ -117,9 +74,7 @@ roadmap.exe <command> [options]
 roadmap --basedir [BASEDIR] <command>
 ```
 
-Specify the base directory path containing roadmap files. If not provided, uses platform-specific default:
-- **Windows**: `C:\Users\<MustaphaELKAMILI>\OneDrive - IKOSCONSULTING\test_RM\files`
-- **Other**: `/mnt/c/Users/MustaphaELKAMILI/OneDrive - IKOSCONSULTING/test_RM/files`
+Specify the base directory path containing roadmap files
 
 ---
 
@@ -228,8 +183,7 @@ roadmap create [--way MODE] [--archive]
 
 * `--way MODE` → Choose processing mode:
   * `normal` (default): Sequential processing using openpyxl (~50s for 51 files)
-  * `para`: Parallel processing using multiprocessing (~9s for 51 files) ⚡ **Fastest**
-  * `xlw`: xlwings-based processing (~3min4s for 51 files) - Best for VBA integration
+  * `para`: Parallel processing using multiprocessing (~9s for 51 files) **Fastest**
 * `--archive` → Archive existing `RM_Collaborateurs` folder before creating new interfaces
 
 **Examples:**
@@ -243,9 +197,6 @@ roadmap create --way para
 
 # Create interfaces and archive existing ones
 roadmap create --archive --way para
-
-# Use xlwings mode for better Excel integration
-roadmap create --way xlw
 
 # With custom base directory
 roadmap --basedir "C:\MyRoadmapFiles" create --way para
@@ -331,7 +282,7 @@ roadmap --basedir "C:\MyRoadmapFiles" cleanup
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 roadmap_manager/
@@ -340,9 +291,8 @@ roadmap_manager/
 │   README.md                   # This file
 │   uv.lock                     # Dependency lock file (uv)
 │   roadmap_cli.py              # Entry point for PyInstaller builds
-│   roadmap.spec                # PyInstaller spec file
 │   build_exe.bat               # Batch script to build executable
-│   
+│
 ├───.logs/                      # Log directory (created automatically)
 │       roadmap.log             # Application logs
 │
@@ -356,7 +306,6 @@ roadmap_manager/
 │       modButtonHandlers.bas   # Button click event handlers
 │       modGlobals.bas          # Global constants and variables
 │       modUtilities.bas        # Utility functions for VBA
-│       VBA_code.bas           # Combined VBA code (all modules)
 │
 ├───tests/                      # Unit tests
 │       test_cli.py             # CLI argument parsing tests
@@ -370,7 +319,7 @@ roadmap_manager/
 
 ---
 
-## 📂 Expected File Structure (Base Directory)
+## Expected File Structure (Base Directory)
 
 The tool expects the following structure in your base directory:
 
@@ -415,7 +364,7 @@ base_directory/
 
 ---
 
-## 🔌 VBA Integration
+## VBA Integration
 
 The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory contains VBA modules that can be imported into your Excel workbook.
 
@@ -447,21 +396,7 @@ The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory conta
    * Right-click on your project → Import File
    * Import all `.bas` files from the `VBA/` directory, or import `VBA_code.bas` (combined version)
 
-2. **Configure Python executable:**
-   * Open `modGlobals.bas`
-   * Update `PYTHONEXE` constant with your Python executable path:
-     ```vba
-     ' If using Python directly:
-     Const PYTHONEXE As String = "C:\Python311\python.exe "
-     
-     ' If using executable:
-     Const PYTHONEXE As String = "C:\path\to\roadmap.exe "
-     
-     ' If using uv:
-     Const PYTHONEXE As String = "uv run roadmap "
-     ```
-
-3. **Create buttons/controls:**
+2. **Create buttons/controls:**
    * In Excel, go to Developer tab → Insert → Button (Form Control)
    * Assign macros to buttons:
      * `Btn_Create_RM` → "Create Interfaces"
@@ -471,7 +406,7 @@ The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory conta
      * `Btn_Update_LC` → "Update LC"
      * `Btn_Cleanup_Missing` → "Cleanup Missing"
 
-4. **Verify base directory:**
+3. **Verify base directory:**
    * Ensure `GetBaseDir()` function returns the correct path
    * Or modify it to match your file structure
 
@@ -496,18 +431,18 @@ The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory conta
 
 ---
 
-## 🏗️ Building Executable
+## Building Executable
 
 You can build a standalone executable for distribution without requiring Python installation.
 
 ### Prerequisites
 
-* PyInstaller installed: `pip install pyinstaller` or `uv pip install pyinstaller`
+* PyInstaller installed: `uv add pyinstaller`
 * All dependencies installed
 
 ### Build Process
 
-**Option 1: Using build script (Windows)**
+**Using build script (Windows)**
 
 ```bash
 build_exe.bat
@@ -517,25 +452,6 @@ This script:
 * Builds `roadmap.exe` using PyInstaller
 * Copies executable to `dist/roadmap.exe`
 * Optionally copies to a predefined destination directory
-
-**Option 2: Manual build**
-
-```bash
-pyinstaller --onefile \
-    --name roadmap \
-    --console \
-    --clean \
-    --paths . \
-    --hidden-import=roadmap \
-    --hidden-import=roadmap.helpers \
-    --hidden-import=roadmap.main \
-    --hidden-import=roadmap.roadmap \
-    --hidden-import=xlwings \
-    --hidden-import=openpyxl \
-    --hidden-import=tqdm \
-    --collect-all xlwings \
-    roadmap_cli.py
-```
 
 **Output:**
 * Executable: `dist/roadmap.exe`
@@ -554,7 +470,7 @@ C:\path\to\roadmap.exe pointage
 
 ---
 
-## 📊 Logging
+## Logging
 
 All operations are logged to `.logs/roadmap.log` with the following information:
 
@@ -579,7 +495,7 @@ All operations are logged to `.logs/roadmap.log` with the following information:
 
 ---
 
-## 🏁 Example Workflows
+## Example Workflows
 
 ### Complete Setup Workflow
 
@@ -631,13 +547,13 @@ roadmap cleanup
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
 **"Required files missing" error:**
 - Ensure `Synthèse_RM_CE.xlsm` and `RM_template.xlsx` exist in base directory
-- Check file names match exactly (case-sensitive on some systems)
+- Check file names match exactly
 - Verify base directory path is correct
 
 **"Template file is opened" error:**
@@ -682,7 +598,7 @@ roadmap cleanup
 
 ---
 
-## 📝 Technical Details
+## Technical Details
 
 ### Processing Modes Comparison
 
@@ -690,7 +606,6 @@ roadmap cleanup
 |------|---------|------------------|----------|
 | `normal` | openpyxl | ~50s | Standard use, reliable |
 | `para` | openpyxl (multiprocessing) | ~9s | Fast batch creation |
-| `xlw` | xlwings | ~3min4s | VBA integration, Excel automation |
 
 ### File Handling
 
@@ -726,7 +641,7 @@ This format is optimized for VBA parsing using `MSXML2.DOMDocument`.
 
 ---
 
-## 🔒 Security Notes
+## Security Notes
 
 * The tool reads and writes Excel files - ensure files are from trusted sources
 * VBA macros require macro-enabled workbooks (`.xlsm` files)
@@ -735,25 +650,13 @@ This format is optimized for VBA parsing using `MSXML2.DOMDocument`.
 
 ---
 
-## 📄 License
-
-MIT License - See LICENSE file for details
-
----
-
-## 👤 Author
+## Author
 
 **Mustapha ELKAMILI**
 
 ---
 
-## 🤝 Contributing
-
-This is a project-specific tool, but suggestions and improvements are welcome. Please ensure any changes maintain compatibility with the existing VBA integration.
-
----
-
-## 📚 Dependencies
+## Dependencies
 
 * **openpyxl** (>=3.1.2): Excel file manipulation
 * **xlwings** (>=0.33.16): Excel automation and VBA integration
@@ -763,7 +666,7 @@ This is a project-specific tool, but suggestions and improvements are welcome. P
 
 ---
 
-## 🔄 Version History
+## Version History
 
 * **v1.0.0**: Initial release
   * Pointage export functionality
@@ -775,19 +678,8 @@ This is a project-specific tool, but suggestions and improvements are welcome. P
   * Comprehensive logging
   * Executable build support
 
----
 
-## 📞 Support
-
-For issues or questions:
-1. Check the troubleshooting section
-2. Review log files in `.logs/roadmap.log`
-3. Verify file structure matches expected format
-4. Ensure all prerequisites are met
-
----
-
-## 🎯 Future Enhancements
+## Future Enhancements
 
 Potential improvements:
 * Support for multiple base directories
@@ -799,6 +691,6 @@ Potential improvements:
 
 ---
 
-**Last Updated**: 2024
+**Last Updated**: 04/12/2025
 
 * The tool skips temporary Excel files (starting with `~$`)
