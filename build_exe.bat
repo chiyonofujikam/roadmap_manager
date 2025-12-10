@@ -10,6 +10,8 @@ pyinstaller --onefile ^
     --name roadmap ^
     --console ^
     --clean ^
+    --noupx ^
+    --optimize=2 ^
     --paths . ^
     --hidden-import=roadmap ^
     --hidden-import=roadmap.helpers ^

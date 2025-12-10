@@ -39,6 +39,7 @@ def main() -> None:
     Returns:
         None
     """
+    logger.info("Roadmap Manager - Loading...")
     if platform.system() == "Windows":
         BASE_DIR = Path(r"C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files")
     else:

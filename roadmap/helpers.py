@@ -23,13 +23,12 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-import xlwings as xw
 from openpyxl import load_workbook
 from openpyxl.worksheet.datavalidation import (DataValidation,
                                                DataValidationList)
 
-# Global xlwings app instance (moved here to avoid circular imports)
-app = xw.App(visible=False)
+# xlwings is imported lazily only when needed (in add_validation_list function)
+# This avoids slow startup when xlwings is not required
 
 def get_exe_dir() -> Path:
     """
@@ -412,18 +411,20 @@ def build_interface(template_bytes: bytes, output_path: str, collab_name: str) -
     wb.close()
 
 def add_validation_list(
-    wb: xw.Book,
+    wb,
     list_range: str,
     target_column: str,
     dropdown_sheet: str = "POINTAGE",
     list_sheet: str = "LC",
     end_row: int = 1000,
-    start_row: int = 4) -> xw.Book:
+    start_row: int = 4):
     """
     Add data validation list to Excel workbook using xlwings.
 
     Applies a dropdown list validation to a column range in Excel.
     The dropdown options come from a specified range in another sheet.
+    
+    xlwings is imported lazily here to avoid startup delay when not needed.
 
     Args:
         wb: xlwings Book object representing the Excel workbook.
@@ -447,6 +448,7 @@ def add_validation_list(
         Removes any existing validation on the target range before adding new validation.
         Uses Excel's native Validation API via xlwings.
     """
+    import xlwings as xw  # Lazy import to speed up startup
     # Build source address for formula
     ws_list = wb.sheets[list_sheet]
     source_range = ws_list.range(list_range)
@@ -513,11 +515,6 @@ def get_parser() -> argparse.ArgumentParser:
         choices=['xlw', 'normal', 'para'],
         default='normal',
         help="Processing mode: 'normal' for sequential processing (~50s), 'para' for parallel processing (~9s, fastest), or 'xlw' for xlwings-based processing (~3min, best for VBA integration)"
-    )
-    create_parser.add_argument(
-        "--archive",
-        action="store_true",
-        help="Archive existing RM_Collaborateurs folder before creating new interfaces"
     )
 
     delete_parser = subparsers_action.add_parser("delete", help="Remove or archive all collaborator interface files from RM_Collaborateurs folder")

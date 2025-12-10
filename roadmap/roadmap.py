@@ -18,7 +18,6 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-import xlwings as xw
 from openpyxl import load_workbook
 from tqdm import tqdm
 
@@ -253,6 +252,8 @@ class RoadmapManager:
         """
         if not self.all_ok:
             return
+
+        import xlwings as xw
 
         logger.info("[CREATE_INTERFACES] interface creation (xlwings processing mode)")
 
@@ -608,7 +609,6 @@ class RoadmapManager:
                     self._update_lc_in_file(rm_file, lc_data)
                 except Exception as e:
                     logger.error(f"[UPDATE_LC] Error updating {rm_file.name}: {e}")
-                    # Continue with other files even if one fails
 
         logger.info("[UPDATE_LC] LC update completed")
 

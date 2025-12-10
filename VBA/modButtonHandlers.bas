@@ -6,8 +6,9 @@ Option Explicit
 ' =============================================================================
 
 Sub Btn_Create_RM()
-    Dim command As String
+    Dim createCommand As String
     Dim baseDir As String
+    Dim exitCode As Long
 
     ' Clean up empty rows in Gestion_Interfaces sheet
     CleanupGestionInterfaces
@@ -15,22 +16,40 @@ Sub Btn_Create_RM()
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
 
-    ' Create collabs.xml file
-    If Not CreateCollabsXML(baseDir) Then Exit Sub
+    Application.ScreenUpdating = False
+    On Error GoTo ErrorHandler
 
-    command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " create --archive"
+    If Not CreateCollabsXML(baseDir) Then
+        MsgBox "Error creating collabs.xml file. Operation aborted.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    createCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " create"
     Application.StatusBar = "Creating collaborator interfaces..."
-    RunCommand command
+    exitCode = RunCommand(createCommand)
     Application.StatusBar = False
 
-    MsgBox "Collaborator interfaces successfully created and archived.", vbInformation, "Creation Complete"
+    If exitCode <> 0 Then
+        MsgBox "Error creating interfaces. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    MsgBox "Collaborator interfaces successfully created.", vbInformation, "Creation Complete"
+
+    Application.ScreenUpdating = True
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
 End Sub
 
 Sub Btn_Delete_RM()
-    Dim command As String
+    Dim deleteCommand As String
     Dim baseDir As String
     Dim forceDelete As VbMsgBoxResult
     Dim archiveChoice As VbMsgBoxResult
+    Dim exitCode As Long
 
     forceDelete = MsgBox("Do you want to FORCE deletion of RM Interfaces?" & vbCrLf & _
                          "(This will delete all generated interfaces)", _
@@ -43,23 +62,38 @@ Sub Btn_Delete_RM()
     archiveChoice = MsgBox("Do you want to ARCHIVE deleted interfaces?", _
                            vbYesNo + vbQuestion, "Archive Confirmation")
 
-    command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " delete --force"
+    Application.ScreenUpdating = False
+    On Error GoTo ErrorHandler
+
+    deleteCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " delete --force"
 
     If archiveChoice = vbYes Then
-        command = command & " --archive"
+        deleteCommand = deleteCommand & " --archive"
         Application.StatusBar = "Archiving and deleting interfaces..."
     Else
         Application.StatusBar = "Deleting interfaces..."
     End If
 
-    RunCommand command
+    exitCode = RunCommand(deleteCommand)
     Application.StatusBar = False
+
+    If exitCode <> 0 Then
+        MsgBox "Error deleting interfaces. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
 
     If archiveChoice = vbYes Then
         MsgBox "Interfaces successfully archived and deleted.", vbInformation, "Deletion Complete"
     Else
         MsgBox "Interfaces successfully deleted.", vbInformation, "Deletion Complete"
     End If
+
+    Application.ScreenUpdating = True
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
 End Sub
 
 Sub Btn_Clear_Synthese()
@@ -78,6 +112,7 @@ Sub Btn_Clear_Synthese()
     Dim sht As Worksheet
     Dim sheetNamesToDelete As Collection
     Dim sheetName As Variant
+    Dim i As Long
 
     archiveConfirm = MsgBox("Do you want to proceed with archiving the SYNTHESE sheet?" & vbCrLf & _
                             "A new archive file will be created.", _
@@ -105,22 +140,21 @@ Sub Btn_Clear_Synthese()
     End If
     On Error GoTo 0
 
+    Application.ScreenUpdating = False
+    On Error GoTo ErrorHandler
+
     ' Determine if there's data to archive
-    lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row
+    lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).row
     hasData = (lastRow >= 3)
 
-    ' Create Archived folder path
+    ' Set Archived folder path (folder always exists)
     archivedFolder = baseDir & "\Archived"
-    If Dir(archivedFolder, vbDirectory) = "" Then
-        MkDir archivedFolder
-    End If
 
     ' Generate timestamp in format: ddmmyyyy_HHMMSS
     timestamp = Format(Now, "ddmmyyyy_HHMMSS")
     archivePath = archivedFolder & "\Archive_SYNTHESE_" & timestamp & ".xlsx"
 
     Application.StatusBar = "Creating archive file with SYNTHESE and LC sheets..."
-    Application.ScreenUpdating = False
 
     ' Create new workbook
     Set newWb = Workbooks.Add
@@ -135,9 +169,6 @@ Sub Btn_Clear_Synthese()
 
     ' Remove all shapes, buttons, rectangles, and form controls from copied sheets
     ' This removes macro assignments and interactive elements
-    Dim i As Long
-
-    ' Remove shapes from SYNTHESE sheet
     Application.DisplayAlerts = False
     For i = newWs.Shapes.Count To 1 Step -1
         newWs.Shapes(i).Delete
@@ -179,8 +210,16 @@ Sub Btn_Clear_Synthese()
 
     ' Save the archive file
     Application.DisplayAlerts = False
+    On Error Resume Next
     newWb.SaveAs archivePath, xlOpenXMLWorkbook
+    If Err.Number <> 0 Then
+        Application.DisplayAlerts = True
+        MsgBox "Error saving archive file: " & Err.Description, vbCritical, "Error"
+        newWb.Close SaveChanges:=False
+        GoTo ErrorHandler
+    End If
     Application.DisplayAlerts = True
+    On Error GoTo ErrorHandler
 
     ' Close the archive workbook
     newWb.Close SaveChanges:=False
@@ -198,10 +237,24 @@ Sub Btn_Clear_Synthese()
                "Archive file saved to: " & archivePath & vbCrLf & _
                "SYNTHESE sheet was already empty.", vbInformation, "Archive Complete"
     End If
+
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
+    Application.DisplayAlerts = True
+    On Error Resume Next
+    If Not newWb Is Nothing Then
+        newWb.Close SaveChanges:=False
+    End If
+    On Error GoTo 0
 End Sub
 
 Sub Btn_Collect_RM_Data()
-    Dim command As String
+    Dim pointageCommand As String
+    Dim deleteCommand As String
+    Dim createCommand As String
     Dim baseDir As String
     Dim xmlPath As String
     Dim ws As Worksheet
@@ -210,27 +263,62 @@ Sub Btn_Collect_RM_Data()
     Dim value As Variant
     Dim r As Long, c As Long
     Dim confirmation As VbMsgBoxResult
+    Dim exitCode As Long
+    Dim rowsImported As Long
+    Dim startRow As Long
 
     confirmation = MsgBox("Do you want to proceed with importing the pointage data?" & vbCrLf & _
-                          "This will import data from RM_Collaborateurs into the SYNTHESE sheet.", _
+                          "This will import data into the SYNTHESE sheet, archive RM_Collaborateurs and create new interfaces.", _
                           vbYesNo + vbQuestion, "Confirm Import")
     If confirmation = vbNo Then Exit Sub
 
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
 
-    command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " pointage"
+    ' Check if SYNTHESE sheet exists
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("SYNTHESE")
+    If Err.Number <> 0 Then
+        MsgBox "SYNTHESE sheet not found.", vbCritical, "Error"
+        Exit Sub
+    End If
+    On Error GoTo 0
+
+    Application.ScreenUpdating = False
+    On Error GoTo ErrorHandler
+
+    ' Step 1: Collect pointage data from existing interfaces
+    pointageCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " pointage"
     Application.StatusBar = "Exporting pointage data from collaborator files..."
-    RunCommand command
+    exitCode = RunCommand(pointageCommand)
     Application.StatusBar = False
 
-    Set ws = ThisWorkbook.Sheets("SYNTHESE")
-    r = ws.Cells(ws.rows.Count, "A").End(xlUp).Row + 1
-    If r < 3 Then r = 3
+    If exitCode <> 0 Then
+        MsgBox "Error exporting pointage data. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
 
+    ' Verify XML file was created
     xmlPath = baseDir & "\pointage_output.xml"
-    Set result = LoadXMLTable(xmlPath)
+    If Dir(xmlPath) = "" Then
+        MsgBox "Error: pointage_output.xml file was not created.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
 
+    ' Load and import XML data
+    Set result = LoadXMLTable(xmlPath)
+    If result Is Nothing Then
+        MsgBox "Error loading XML data. The file may be corrupted or empty.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    ' Find starting row for data import
+    startRow = ws.Cells(ws.rows.Count, "A").End(xlUp).row + 1
+    If startRow < 3 Then startRow = 3
+    r = startRow
+    rowsImported = 0
+
+    ' Import data into SYNTHESE sheet
     For Each rowData In result
         c = 1
         For Each value In rowData
@@ -238,17 +326,68 @@ Sub Btn_Collect_RM_Data()
             c = c + 1
         Next value
         r = r + 1
+        rowsImported = rowsImported + 1
     Next rowData
 
+    ' Clean up temporary XML file
     If Dir(xmlPath) <> "" Then Kill xmlPath
 
-    MsgBox "Pointage successfully imported from 'RM_Collaborateurs'", vbInformation, "Import Complete"
+    ' Show import summary
+    If rowsImported > 0 Then
+        MsgBox "Pointage successfully imported from 'RM_Collaborateurs'." & vbCrLf & _
+               rowsImported & " row(s) imported into SYNTHESE sheet.", vbInformation, "Import Complete"
+    Else
+        MsgBox "No data to import. The pointage file was empty.", vbInformation, "Import Complete"
+    End If
+
+    ' Step 2: Clean up empty rows in Gestion_Interfaces sheet
+    CleanupGestionInterfaces
+
+    ' Step 3: Create collabs.xml file (needed for delete and create commands)
+    If Not CreateCollabsXML(baseDir) Then
+        MsgBox "Error creating collabs.xml file. Operation aborted.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    ' Step 4: Delete existing interfaces
+    deleteCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " delete --force"
+    Application.StatusBar = "Deleting interfaces..."
+    exitCode = RunCommand(deleteCommand)
+    Application.StatusBar = False
+
+    If exitCode <> 0 Then
+        MsgBox "Error deleting interfaces. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    MsgBox "Interfaces successfully deleted.", vbInformation, "Deletion Complete"
+
+    ' Step 5: Create new collaborator interfaces
+    createCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " create"
+    Application.StatusBar = "Creating collaborator interfaces..."
+    exitCode = RunCommand(createCommand)
+    Application.StatusBar = False
+
+    If exitCode <> 0 Then
+        MsgBox "Error creating interfaces. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    MsgBox "Collaborator interfaces successfully created.", vbInformation, "Creation Complete"
+
+    Application.ScreenUpdating = True
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
 End Sub
 
 Sub Btn_Update_LC()
-    Dim command As String
+    Dim updateCommand As String
     Dim baseDir As String
     Dim confirmation As VbMsgBoxResult
+    Dim exitCode As Long
 
     confirmation = MsgBox("Do you want to proceed with updating the conditional lists (LC)?" & vbCrLf & _
                           "This will update LC in the template and all collaborator files.", _
@@ -258,21 +397,40 @@ Sub Btn_Update_LC()
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
 
-    ' Create LC.xlsx file from LC sheet
-    If Not CreateLCExcel(baseDir) Then Exit Sub
+    Application.ScreenUpdating = False
+    On Error GoTo ErrorHandler
 
-    command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " update"
+    ' Create LC.xlsx file from LC sheet
+    If Not CreateLCExcel(baseDir) Then
+        MsgBox "Error creating LC.xlsx file. Operation aborted.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    updateCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " update"
     Application.StatusBar = "Updating conditional lists (LC) in all files..."
-    RunCommand command
+    exitCode = RunCommand(updateCommand)
     Application.StatusBar = False
 
+    If exitCode <> 0 Then
+        MsgBox "Error updating LC. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
     MsgBox "LC successfully updated in template and all collaborator files.", vbInformation, "Update Complete"
+
+    Application.ScreenUpdating = True
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
 End Sub
 
 Sub Btn_Cleanup_RM()
-    Dim command As String
+    Dim cleanupCommand As String
     Dim baseDir As String
     Dim confirmation As VbMsgBoxResult
+    Dim exitCode As Long
 
     ' Clean up empty rows in Gestion_Interfaces sheet
     CleanupGestionInterfaces
@@ -285,13 +443,30 @@ Sub Btn_Cleanup_RM()
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
 
-    ' Create collabs.xml file
-    If Not CreateCollabsXML(baseDir) Then Exit Sub
+    Application.ScreenUpdating = False
+    On Error GoTo ErrorHandler
 
-    command = PYTHONEXE & "--basedir " & """" & baseDir & """" & " cleanup"
+    If Not CreateCollabsXML(baseDir) Then
+        MsgBox "Error creating collabs.xml file. Operation aborted.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    cleanupCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " cleanup"
     Application.StatusBar = "Cleaning up missing collaborator interfaces..."
-    RunCommand command
+    exitCode = RunCommand(cleanupCommand)
     Application.StatusBar = False
 
+    If exitCode <> 0 Then
+        MsgBox "Error during cleanup. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
     MsgBox "Cleanup complete. Missing collaborator interfaces have been deleted.", vbInformation, "Cleanup Complete"
+
+    Application.ScreenUpdating = True
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
 End Sub
