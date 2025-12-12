@@ -251,7 +251,7 @@ ErrorHandler:
     On Error GoTo 0
 End Sub
 
-Sub Btn_Collect_RM_Data()
+Sub Btn_Collect_RM_Data_Reset()
     Dim pointageCommand As String
     Dim deleteCommand As String
     Dim createCommand As String
@@ -462,6 +462,101 @@ Sub Btn_Cleanup_RM()
     End If
 
     MsgBox "Cleanup complete. Missing collaborator interfaces have been deleted.", vbInformation, "Cleanup Complete"
+
+    Application.ScreenUpdating = True
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
+End Sub
+
+Sub Btn_Collect_RM_Data()
+    Dim pointageCommand As String
+    Dim baseDir As String
+    Dim xmlPath As String
+    Dim ws As Worksheet
+    Dim result As Collection
+    Dim rowData As Collection
+    Dim value As Variant
+    Dim r As Long, c As Long
+    Dim confirmation As VbMsgBoxResult
+    Dim exitCode As Long
+    Dim rowsImported As Long
+    Dim startRow As Long
+
+    confirmation = MsgBox("Do you want to proceed with importing the pointage data?" & vbCrLf & _
+                          "This will import data from RM_Collaborateurs into the SYNTHESE sheet.", _
+                          vbYesNo + vbQuestion, "Confirm Import")
+    If confirmation = vbNo Then Exit Sub
+
+    baseDir = GetBaseDir()
+    If baseDir = "" Then Exit Sub
+
+    ' Check if SYNTHESE sheet exists
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("SYNTHESE")
+    If Err.Number <> 0 Then
+        MsgBox "SYNTHESE sheet not found.", vbCritical, "Error"
+        Exit Sub
+    End If
+    On Error GoTo 0
+
+    Application.ScreenUpdating = False
+    On Error GoTo ErrorHandler
+
+    ' Collect pointage data from existing interfaces
+    pointageCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " pointage"
+    Application.StatusBar = "Exporting pointage data from collaborator files..."
+    exitCode = RunCommand(pointageCommand)
+    Application.StatusBar = False
+
+    If exitCode <> 0 Then
+        MsgBox "Error exporting pointage data. Exit code: " & exitCode, vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    ' Verify XML file was created
+    xmlPath = baseDir & "\pointage_output.xml"
+    If Dir(xmlPath) = "" Then
+        MsgBox "Error: pointage_output.xml file was not created.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    ' Load and import XML data
+    Set result = LoadXMLTable(xmlPath)
+    If result Is Nothing Then
+        MsgBox "Error loading XML data. The file may be corrupted or empty.", vbCritical, "Error"
+        GoTo ErrorHandler
+    End If
+
+    ' Find starting row for data import
+    startRow = ws.Cells(ws.rows.Count, "A").End(xlUp).row + 1
+    If startRow < 3 Then startRow = 3
+    r = startRow
+    rowsImported = 0
+
+    ' Import data into SYNTHESE sheet
+    For Each rowData In result
+        c = 1
+        For Each value In rowData
+            ws.Cells(r, c).value = value
+            c = c + 1
+        Next value
+        r = r + 1
+        rowsImported = rowsImported + 1
+    Next rowData
+
+    ' Clean up temporary XML file
+    If Dir(xmlPath) <> "" Then Kill xmlPath
+
+    ' Show import summary
+    If rowsImported > 0 Then
+        MsgBox "Pointage successfully imported from 'RM_Collaborateurs'." & vbCrLf & _
+               rowsImported & " row(s) imported into SYNTHESE sheet.", vbInformation, "Import Complete"
+    Else
+        MsgBox "No data to import. The pointage file was empty.", vbInformation, "Import Complete"
+    End If
 
     Application.ScreenUpdating = True
     Exit Sub

@@ -1,5 +1,3 @@
-import pytest
-
 from roadmap.helpers import get_parser
 
 

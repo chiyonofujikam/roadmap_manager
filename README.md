@@ -282,6 +282,16 @@ roadmap --basedir "C:\MyRoadmapFiles" cleanup
 
 ---
 
+## Documentation
+
+The project includes comprehensive documentation:
+
+| Document | Description |
+|----------|-------------|
+| `README.md` | Main documentation (this file) - installation, usage, commands |
+| `PRESENTATION.md` | Project presentation with Mermaid diagrams - architecture overview, workflows |
+---
+
 ## Project Structure
 
 ```text
@@ -289,6 +299,7 @@ roadmap_manager/
 │   .gitignore
 │   pyproject.toml              # Project configuration & dependencies
 │   README.md                   # This file
+│   PRESENTATION.md             # Project presentation with diagrams
 │   uv.lock                     # Dependency lock file (uv)
 │   roadmap_cli.py              # Entry point for PyInstaller builds
 │   build_exe.bat               # Batch script to build executable
@@ -307,9 +318,14 @@ roadmap_manager/
 │       modGlobals.bas          # Global constants and variables
 │       modUtilities.bas        # Utility functions for VBA
 │
-├───tests/                      # Unit tests
+├───tests/                      # Unit & integration tests
+│       __init__.py             # Test package initialization
+│       conftest.py             # Shared pytest fixtures
 │       test_cli.py             # CLI argument parsing tests
 │       test_helpers.py         # Helper function tests
+│       test_roadmap_manager.py # RoadmapManager integration tests
+│
+├───htmlcov/                    # Coverage report (generated, gitignored)
 │
 ├───build/                      # PyInstaller build artifacts (temporary)
 │
@@ -331,15 +347,15 @@ base_directory/
 │   collabs.xml                  # Temporary file (created by VBA, deleted after use)
 │   pointage_output.xml          # Generated XML export (created by tool)
 │
+├───script/                      # Executable location (for VBA integration)
+│       roadmap.exe              # Built executable (copied here for VBA)
+│
 ├───RM_Collaborateurs/           # Collaborator interface files (created by tool)
-│       RM_Alice.xlsx
-│       RM_Bob.xlsx
-│       RM_Charlie.xlsx
 │       ...
 │
 ├───Archived/                    # Archive folder (created by tool)
-│       Archive_RM_Collaborateurs_01012024_120000.zip
-│       Archive_SYNTHESE_01012024_120000.xlsx
+│       Archive_RM_Collaborateurs_01012025_120000.zip
+│       Archive_SYNTHESE_01012024_120000.xlsx    # Contains SYNTHESE + LC sheets
 │       ...
 │
 └───Deleted/                      # Deleted files folder (created by tool)
@@ -347,6 +363,8 @@ base_directory/
         Deleted_Missing_RM_collaborators_01012024_120000.zip
         ...
 ```
+
+**Note:** The VBA code expects `roadmap.exe` in the `script/` subdirectory of the base directory.
 
 ### Required Excel File Structure
 
@@ -375,18 +393,22 @@ The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory conta
    * `GetBaseDir()`: Function to get base directory path
 
 2. **modUtilities.bas**: Utility functions
-   * `RunCommand()`: Execute shell commands
-   * `CreateCollabsXML()`: Generate collaborator XML from Excel sheet
-   * `CleanupGestionInterfaces()`: Remove empty rows from interface sheet
-   * `ImportXMLToSheet()`: Import XML data to Excel sheet
+   * `RunCommand()`: Execute shell commands and return exit code
+   * `GetBaseDir()`: Get or prompt for base directory path (cached)
+   * `LoadXMLTable()`: Parse XML file and return data as collection
+   * `EscapeXML()`: Escape special characters for XML content
+   * `CreateCollabsXML()`: Generate collaborator XML from Gestion_Interfaces sheet
+   * `CreateLCExcel()`: Export LC sheet to LC.xlsx file for Python processing
+   * `CleanupGestionInterfaces()`: Remove empty rows from interface sheet (auto-runs before operations)
 
 3. **modButtonHandlers.bas**: Button click event handlers
    * `Btn_Create_RM()`: Create interfaces via button click
    * `Btn_Delete_RM()`: Delete interfaces with confirmation dialogs
    * `Btn_Collect_RM_Data()`: Import pointage data from XML to SYNTHESE sheet
-   * `Btn_Clear_Synthese()`: Clear SYNTHESE sheet with archiving option
+   * `Btn_Collect_RM_Data_Reset()`: Full reset workflow - import data, delete interfaces, and recreate
+   * `Btn_Clear_Synthese()`: Archive SYNTHESE and LC sheets, then clear SYNTHESE data
    * `Btn_Update_LC()`: Update conditional lists (LC) in template and all collaborator files
-   * `Btn_Cleanup_Missing()`: Cleanup missing collaborators
+   * `Btn_Cleanup_RM()`: Cleanup interfaces for collaborators no longer in the list
 
 ### VBA Setup
 
@@ -402,9 +424,10 @@ The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory conta
      * `Btn_Create_RM` → "Create Interfaces"
      * `Btn_Delete_RM` → "Delete Interfaces"
      * `Btn_Collect_RM_Data` → "Collect Pointage Data"
+     * `Btn_Collect_RM_Data_Reset` → "Collect & Reset" (full cycle: collect → delete → recreate)
      * `Btn_Clear_Synthese` → "Clear SYNTHESE"
      * `Btn_Update_LC` → "Update LC"
-     * `Btn_Cleanup_Missing` → "Cleanup Missing"
+     * `Btn_Cleanup_RM` → "Cleanup Missing"
 
 3. **Verify base directory:**
    * Ensure `GetBaseDir()` function returns the correct path
@@ -412,22 +435,25 @@ The tool integrates seamlessly with Excel VBA macros. The `VBA/` directory conta
 
 ### How VBA Integration Works
 
-1. **VBA creates temporary files:**
-   * `collabs.xml`: List of collaborators from `Gestion_Interfaces` sheet
-   * `LC.xlsx`: Conditional list data from `LC` sheet
+1. **VBA prepares data:**
+   * `CleanupGestionInterfaces()` removes empty rows from collaborator list (runs automatically)
+   * `collabs.xml`: Generated from `Gestion_Interfaces` sheet column B
+   * `LC.xlsx`: Exported from `LC` sheet with text formatting preserved
 
 2. **VBA calls Python CLI:**
-   * Executes shell command with appropriate arguments
-   * Waits for completion
+   * Executes shell command with appropriate arguments via `RunCommand()`
+   * Waits for completion and checks exit code
 
 3. **Python processes files:**
-   * Reads temporary files
-   * Performs operations (create, update, delete, etc.)
+   * Reads temporary files (`collabs.xml`, `LC.xlsx`)
+   * Performs operations (create, update, delete, pointage, cleanup)
    * Generates output files (e.g., `pointage_output.xml`)
+   * Deletes temporary input files after reading
 
 4. **VBA imports results:**
-   * Reads `pointage_output.xml` and imports to `SYNTHESE` sheet
-   * Cleans up temporary files
+   * `LoadXMLTable()` parses `pointage_output.xml`
+   * Imports data to `SYNTHESE` sheet starting at first empty row
+   * Cleans up temporary XML file after import
 
 ---
 
@@ -467,6 +493,55 @@ C:\path\to\roadmap.exe pointage
 ```
 
 **Note:** The executable is self-contained and doesn't require Python or any dependencies to be installed on the target machine.
+
+---
+
+## Testing
+
+The project includes a comprehensive test suite using pytest.
+
+### Running Tests
+
+```bash
+# Run all tests
+uv run pytest tests/ -v
+
+# Run specific test file
+uv run pytest tests/test_cli.py -v
+uv run pytest tests/test_helpers.py -v
+uv run pytest tests/test_roadmap_manager.py -v
+```
+
+### Code Coverage
+
+Generate a coverage report to see how much of the code is tested:
+
+```bash
+# Run tests with coverage report (terminal output)
+uv run pytest tests/ --cov=roadmap
+
+# Run tests with HTML coverage report
+uv run pytest tests/ --cov=roadmap --cov-report=html
+```
+
+The HTML report is generated in the `htmlcov/` directory. Open `htmlcov/index.html` in a browser to view detailed coverage information.
+
+### Test Structure
+
+| Test File | Description | Tests |
+|-----------|-------------|-------|
+| `test_cli.py` | CLI argument parsing tests | 2 |
+| `test_helpers.py` | Helper function tests (XML, Excel, validation) | 26 |
+| `test_roadmap_manager.py` | RoadmapManager integration tests | 30 |
+| `conftest.py` | Shared pytest fixtures | - |
+
+**Total: 58 tests**
+
+### Test Categories
+
+* **CLI Tests**: Validate command-line argument parsing for all commands
+* **Helper Tests**: Test utility functions (XML operations, file handling, data validation)
+* **Integration Tests**: Test RoadmapManager class operations (create, delete, pointage, update)
 
 ---
 
@@ -606,7 +681,7 @@ roadmap cleanup
 |------|---------|------------------|----------|
 | `normal` | openpyxl | ~50s | Standard use, reliable |
 | `para` | openpyxl (multiprocessing) | ~9s | Fast batch creation |
-
+ 
 ### File Handling
 
 * **Temporary files**: `collabs.xml` and `LC.xlsx` are automatically deleted after use
@@ -663,6 +738,8 @@ This format is optimized for VBA parsing using `MSXML2.DOMDocument`.
 * **tqdm** (>=4.67.1): Progress bars
 * **pywin32** (>=306): Windows-specific functionality
 * **pyinstaller** (>=6.17.0): Executable building (optional)
+* **pytest** (>=9.0.1): Testing framework (dev dependency)
+* **pytest-cov** (>=7.0.0): Coverage reporting (dev dependency)
 
 ---
 
@@ -691,6 +768,4 @@ Potential improvements:
 
 ---
 
-**Last Updated**: 04/12/2025
-
-* The tool skips temporary Excel files (starting with `~$`)
+**Last Updated**: 12/12/2024

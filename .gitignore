@@ -1,4 +1,7 @@
 .logs/
+htmlcov/
+
+.coverage
 logs/
 scripts/
 .env
@@ -40,3 +43,5 @@ Thumbs.db
 # Backups
 *.bak
 backup/
+*.lock
+*.spec
