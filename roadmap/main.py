@@ -11,7 +11,7 @@ The CLI supports the following commands:
     4. pointage - Export time tracking data
     5. update - Update conditional lists (LC)
 
-The module integrates with Excel files using openpyxl and xlwings, and can be called from both command-line and VBA macros.
+The module integrates with Excel files using openpyxl, and can be called from both command-line and VBA macros.
 
 Author: Mustapha EL KAMILI
 """
@@ -53,10 +53,8 @@ def main() -> None:
             manager.create_interfaces()
         elif args.way == 'para':
             manager.create_interfaces_fast()
-        elif args.way == 'xlw':
-            manager.create_interfaces_xlwings()
         else:
-            logger.error(f"Unknown '--way' argument '{args.way}'. Valid choices are 'normal', 'para', and 'xlw'.")
+            logger.error(f"Unknown '--way' argument '{args.way}'. Valid choices are 'normal' and 'para'.")
         return
 
     if args.action == "delete":

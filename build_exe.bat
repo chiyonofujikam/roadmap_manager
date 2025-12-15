@@ -17,10 +17,8 @@ pyinstaller --onefile ^
     --hidden-import=roadmap.helpers ^
     --hidden-import=roadmap.main ^
     --hidden-import=roadmap.roadmap ^
-    --hidden-import=xlwings ^
     --hidden-import=openpyxl ^
     --hidden-import=tqdm ^
-    --collect-all xlwings ^
     roadmap_cli.py
 
 echo.
@@ -29,20 +27,20 @@ if exist "dist\roadmap.exe" (
     echo.
 
     REM Create destination directory if it doesn't exist
-    if not exist "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script" (
-        mkdir "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script"
+    if not exist "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\roadmap_manager\script" (
+        mkdir "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\roadmap_manager\script"
         echo Created destination directory: C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script
     )
 
     REM Check if file already exists at destination
-    if exist "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script\roadmap.exe" (
+    if exist "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\roadmap_manager\script\roadmap.exe" (
         echo Existing roadmap.exe found at destination. It will be overwritten.
     )
 
     REM Copy the executable to destination (/Y flag overwrites without prompting)
-    copy /Y "dist\roadmap.exe" "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script\roadmap.exe"
+    copy /Y "dist\roadmap.exe" "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\roadmap_manager\script\roadmap.exe"
 
-    if exist "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script\roadmap.exe" (
+    if exist "C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\roadmap_manager\script\roadmap.exe" (
         echo.
         echo Executable copied to: C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script\roadmap.exe
     ) else (
@@ -52,7 +50,7 @@ if exist "dist\roadmap.exe" (
     echo.
     echo Build complete! Executable is available at:
     echo   - dist\roadmap.exe (original)
-    echo   - C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files\script\roadmap.exe (copied)
+    echo   - C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\roadmap_manager\script\roadmap.exe (copied)
 ) else (
     echo ERROR: Build failed. Check the output above for errors.
 )

@@ -27,9 +27,6 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.datavalidation import (DataValidation,
                                                DataValidationList)
 
-# xlwings is imported lazily only when needed (in add_validation_list function)
-# This avoids slow startup when xlwings is not required
-
 def get_exe_dir() -> Path:
     """
     Determine the directory where the executable/script is located.
@@ -410,69 +407,6 @@ def build_interface(template_bytes: bytes, output_path: str, collab_name: str) -
     wb.save(output_path)
     wb.close()
 
-def add_validation_list(
-    wb,
-    list_range: str,
-    target_column: str,
-    dropdown_sheet: str = "POINTAGE",
-    list_sheet: str = "LC",
-    end_row: int = 1000,
-    start_row: int = 4):
-    """
-    Add data validation list to Excel workbook using xlwings.
-
-    Applies a dropdown list validation to a column range in Excel.
-    The dropdown options come from a specified range in another sheet.
-    
-    xlwings is imported lazily here to avoid startup delay when not needed.
-
-    Args:
-        wb: xlwings Book object representing the Excel workbook.
-        list_range (str): Excel range string (e.g., "B3:B1000") containing
-            the list of valid values.
-        target_column (str): Column letter (e.g., "E") where validation
-            should be applied.
-        dropdown_sheet (str, optional): Name of sheet containing target cells.
-            Defaults to "POINTAGE".
-        list_sheet (str, optional): Name of sheet containing source list.
-            Defaults to "LC".
-        end_row (int, optional): Last row number for validation range.
-            Defaults to 1000.
-        start_row (int, optional): First row number for validation range.
-            Defaults to 4.
-
-    Returns:
-        Book: The modified xlwings Book object.
-
-    Note:
-        Removes any existing validation on the target range before adding new validation.
-        Uses Excel's native Validation API via xlwings.
-    """
-    import xlwings as xw  # Lazy import to speed up startup
-    # Build source address for formula
-    ws_list = wb.sheets[list_sheet]
-    source_range = ws_list.range(list_range)
-
-    # Build target range: column from start_row to end of Excel
-    ws_dropdown = wb.sheets[dropdown_sheet]
-    target_range = ws_dropdown.range(f"{target_column}{start_row}:{target_column}{end_row}")
-
-    # Apply validation
-    validation = target_range.api.Validation
-    try:
-        validation.Delete()
-    except Exception:
-        pass
-
-    validation.Add(
-        Type=3,
-        AlertStyle=1,
-        Operator=1,
-        Formula1=f"='{list_sheet}'!{source_range.get_address()}"
-    )
-
-    return wb
-
 def get_parser() -> argparse.ArgumentParser:
     """
     Create and configure CLI argument parser.
@@ -485,7 +419,7 @@ def get_parser() -> argparse.ArgumentParser:
 
     Commands:
         - create: Create collaborator interfaces
-            Options: --way (normal/para/xlw), --archive
+            Options: --way (normal/para), --archive
         - delete: Delete collaborator interfaces
             Options: --archive, --force
         - pointage: Export time tracking data
@@ -512,9 +446,9 @@ def get_parser() -> argparse.ArgumentParser:
     create_parser = subparsers_action.add_parser("create", help="Generate Excel interface files for all collaborators listed in the synthesis file")
     create_parser.add_argument(
         "--way",
-        choices=['xlw', 'normal', 'para'],
+        choices=['normal', 'para'],
         default='normal',
-        help="Processing mode: 'normal' for sequential processing (~50s), 'para' for parallel processing (~9s, fastest), or 'xlw' for xlwings-based processing (~3min, best for VBA integration)"
+        help="Processing mode: 'normal' for sequential processing (~50s), 'para' for parallel processing (~9s, fastest)"
     )
 
     delete_parser = subparsers_action.add_parser("delete", help="Remove or archive all collaborator interface files from RM_Collaborateurs folder")

@@ -13,7 +13,6 @@ keywords = [
     "automation",
     "vba",
     "time-tracking",
-    "xlwings",
     "openpyxl"
 ]
 classifiers = [
@@ -34,8 +33,7 @@ dependencies = [
     "pyinstaller>=6.17.0",
     "pytest>=9.0.1",
     "pywin32>=306",
-    "tqdm>=4.67.1",
-    "xlwings>=0.33.16",
+    "tqdm>=4.67.1"
 ]
 
 [project.optional-dependencies]

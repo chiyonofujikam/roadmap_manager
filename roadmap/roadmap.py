@@ -7,7 +7,7 @@ This module provides the RoadmapManager class for automating roadmap management 
     3. Creating user interfaces
     4. Deleting interfaces
 
-The class integrates with Excel files using openpyxl and xlwings, and can be called from both command-line and VBA macros.
+The class integrates with Excel files using openpyxl, and can be called from both command-line and VBA macros.
 
 Author: Mustapha EL KAMILI
 """
@@ -21,11 +21,12 @@ from pathlib import Path
 from openpyxl import load_workbook
 from tqdm import tqdm
 
-from roadmap.helpers import (add_data_validations_to_sheet,
-                             add_validation_list, build_interface,
+from roadmap.helpers import (add_data_validations_to_sheet, build_interface,
                              get_collaborators, load_lc_excel, logger,
                              rmtree_with_retry, write_xml, zip_folder)
 
+RG = "#FF0000"
+VR = "#00B050"
 
 class RoadmapManager:
     """
@@ -227,101 +228,6 @@ class RoadmapManager:
             add_data_validations_to_sheet(ws_pointage, start_row=3)
 
             wb.save(target)
-            wb.close()
-
-        logger.info("[CREATE_INTERFACES] creation done.")
-
-    def create_interfaces_xlwings(self) -> None:
-        """
-        Create user interfaces using xlwings library.
-
-        Uses xlwings for Excel automation, which provides better integration with Excel's native features but is slower than openpyxl.
-        Only creates missing collaborator files - checks if file exists before creating.
-        Useful when you need Excel to be running or for VBA integration scenarios.
-
-        Args:
-            archive (bool): Ignored - kept for backward compatibility.
-
-        Returns:
-            None: Returns early if required files are missing or no collaborators found.
-
-        Note:
-            Estimated time: ~3min4s for 51 files. This is the slowest method.
-                Prefer 'create_interfaces()' or 'create_interfaces_fast()' unless xlwings-specific features are required.
-            Only creates files that don't already exist.
-        """
-        if not self.all_ok:
-            return
-
-        import xlwings as xw
-
-        logger.info("[CREATE_INTERFACES] interface creation (xlwings processing mode)")
-
-        collaborators = get_collaborators(self.synthese_file)
-        if not collaborators:
-            logger.info(
-                "[CREATE_INTERFACES] the list of CE is empty."
-                f" Please check XML file or 'Gestion_Interfaces' sheet in '{self.synthese_file}'")
-            return
-
-        logger.info(f"[CREATE_INTERFACES] Found {len(collaborators)} collaborators")
-
-        # Ensure RM_Collaborateurs folder exists
-        self.rm_folder.mkdir(exist_ok=True)
-
-        # Filter out collaborators whose files already exist
-        missing_collabs = []
-        for collab in collaborators:
-            target_path = self.rm_folder / f"RM_{collab}.xlsx"
-            if not target_path.exists():
-                missing_collabs.append(collab)
-            else:
-                logger.debug(f"[CREATE_INTERFACES] File already exists: {target_path.name}")
-
-        if not missing_collabs:
-            logger.info("[CREATE_INTERFACES] All collaborator files already exist. Nothing to create.")
-            return
-
-        logger.info(f"[CREATE_INTERFACES] Creating {len(missing_collabs)} missing interface file(s)")
-
-        for collab in tqdm(missing_collabs, desc="Creating interfaces", total=len(missing_collabs)):
-            target_path = self.rm_folder / f"RM_{collab}.xlsx"
-            shutil.copy2(self.template_file, target_path)
-
-            wb = xw.Book(str(target_path))
-            pointage_sheet = wb.sheets["POINTAGE"]
-            pointage_sheet["B1"].value = collab
-
-            # Semain
-            wb = add_validation_list(
-                wb,
-                list_sheet="POINTAGE",
-                list_range="A2:A2",
-                target_column="D",
-            )
-
-            # Clef d'imputation
-            wb = add_validation_list(
-                wb,
-                list_range="B3:B1000",
-                target_column="E",
-            )
-
-            # Libellé
-            wb = add_validation_list(
-                wb,
-                list_range="C3:C1000",
-                target_column="F",
-            )
-
-            # Fonction
-            wb = add_validation_list(
-                wb,
-                list_range="D3:D1000",
-                target_column="G",
-            )
-
-            wb.save()
             wb.close()
 
         logger.info("[CREATE_INTERFACES] creation done.")
@@ -536,6 +442,8 @@ class RoadmapManager:
             wb = load_workbook(collaborator_file, data_only=True, read_only=True)
             sheet = wb["POINTAGE"]
 
+            k1_value = sheet["K1"].value or 0
+
             for row in sheet.iter_rows(min_row=4, min_col=1, max_col=11):
                 row_data = [cell.value for cell in row]
 
@@ -543,6 +451,8 @@ class RoadmapManager:
                 if all(v is None for v in row_data):
                     break
 
+                # Append K1 total to help downstream coloring logic
+                row_data.append(k1_value)
                 all_rows.append(row_data)
 
             wb.close()

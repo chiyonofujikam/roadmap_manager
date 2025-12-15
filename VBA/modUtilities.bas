@@ -288,6 +288,65 @@ Function CreateLCExcel(baseDir As String) As Boolean
     CreateLCExcel = True
 End Function
 
+Sub ApplySyntheseRowColoring(ws As Worksheet, Optional startRow As Long = 3, _
+                             Optional dataLastCol As Long = 11, Optional helperCol As Long = 53, _
+                             Optional thresholdVal As Double = 35)
+    Dim lastRow As Long
+    Dim r As Long
+    Dim totalVal As Variant
+    Dim targetRange As Range
+    Dim redColor As Long
+    Dim greenColor As Long
+
+    redColor = RGB(255, 0, 0)      ' #FF0000
+    greenColor = RGB(0, 176, 80)   ' #00B050
+
+    ' Determine last row using helper column; fall back to column A if empty
+    lastRow = ws.Cells(ws.rows.Count, helperCol).End(xlUp).row
+    If lastRow < startRow Then lastRow = ws.Cells(ws.rows.Count, 1).End(xlUp).row
+
+    If lastRow < startRow Then Exit Sub
+
+    For r = startRow To lastRow
+        totalVal = ws.Cells(r, helperCol).value
+        If IsNumeric(totalVal) Then
+            Set targetRange = ws.Range(ws.Cells(r, 1), ws.Cells(r, dataLastCol))
+            If Val(totalVal) < thresholdVal Then
+                targetRange.Interior.Color = redColor
+            Else
+                targetRange.Interior.Color = greenColor
+            End If
+        End If
+        ' Clear helper column to keep sheet clean
+        ws.Cells(r, helperCol).ClearContents
+    Next r
+End Sub
+
+Sub ImportPointageRows(ws As Worksheet, result As Collection, startRow As Long, _
+                       ByRef rowsImported As Long, _
+                       Optional dataLastCol As Long = 11, Optional helperCol As Long = 53)
+    Dim rowData As Collection
+    Dim c As Long
+    Dim value As Variant
+    Dim r As Long
+
+    rowsImported = 0
+    r = startRow
+
+    For Each rowData In result
+        For c = 1 To rowData.Count
+            value = rowData(c)
+            If c <= dataLastCol Then
+                ws.Cells(r, c).value = value
+            ElseIf c = 12 Then
+                ws.Cells(r, helperCol).value = value
+            End If
+        Next c
+        r = r + 1
+        rowsImported = rowsImported + 1
+    Next rowData
+End Sub
+
 Sub CleanupGestionInterfaces()
     Dim ws As Worksheet
     Dim row As Long

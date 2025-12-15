@@ -318,16 +318,11 @@ Sub Btn_Collect_RM_Data_Reset()
     r = startRow
     rowsImported = 0
 
-    ' Import data into SYNTHESE sheet
-    For Each rowData In result
-        c = 1
-        For Each value In rowData
-            ws.Cells(r, c).value = value
-            c = c + 1
-        Next value
-        r = r + 1
-        rowsImported = rowsImported + 1
-    Next rowData
+    ' Import data into SYNTHESE sheet (maps helper to BA) and color rows
+    ImportPointageRows ws, result, startRow, rowsImported, 11, 53
+
+    ' Apply coloring based on K1 totals (helper column after import, using BA)
+    ApplySyntheseRowColoring ws, startRow, 11, 53, 35
 
     ' Clean up temporary XML file
     If Dir(xmlPath) <> "" Then Kill xmlPath
@@ -536,16 +531,11 @@ Sub Btn_Collect_RM_Data()
     r = startRow
     rowsImported = 0
 
-    ' Import data into SYNTHESE sheet
-    For Each rowData In result
-        c = 1
-        For Each value In rowData
-            ws.Cells(r, c).value = value
-            c = c + 1
-        Next value
-        r = r + 1
-        rowsImported = rowsImported + 1
-    Next rowData
+    ' Import data into SYNTHESE sheet (maps helper to BA)
+    ImportPointageRows ws, result, startRow, rowsImported, 11, 53
+
+    ' Apply coloring based on K1 totals (helper column after import, using BA)
+    ApplySyntheseRowColoring ws, startRow, 11, 53, 35
 
     ' Clean up temporary XML file
     If Dir(xmlPath) <> "" Then Kill xmlPath

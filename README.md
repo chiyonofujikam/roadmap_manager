@@ -734,7 +734,6 @@ This format is optimized for VBA parsing using `MSXML2.DOMDocument`.
 ## Dependencies
 
 * **openpyxl** (>=3.1.2): Excel file manipulation
-* **xlwings** (>=0.33.16): Excel automation and VBA integration
 * **tqdm** (>=4.67.1): Progress bars
 * **pywin32** (>=306): Windows-specific functionality
 * **pyinstaller** (>=6.17.0): Executable building (optional)
