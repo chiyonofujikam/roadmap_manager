@@ -24,7 +24,7 @@ Sub Btn_Create_RM()
         GoTo ErrorHandler
     End If
 
-    createCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " create"
+    createCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " create --way para"
     Application.StatusBar = "Creating collaborator interfaces..."
     exitCode = RunCommand(createCommand)
     Application.StatusBar = False

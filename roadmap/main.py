@@ -40,13 +40,12 @@ def main() -> None:
         None
     """
     logger.info("Roadmap Manager - Loading...")
-    if platform.system() == "Windows":
-        BASE_DIR = Path(r"C:\Users\MustaphaELKAMILI\OneDrive - IKOSCONSULTING\test_RM\files")
-    else:
-        BASE_DIR = Path("/mnt/c/Users/MustaphaELKAMILI/OneDrive - IKOSCONSULTING/test_RM/files")
-
     args = get_parser().parse_args()
-    manager = RoadmapManager(base_dir=BASE_DIR if args.basedir == 'none' else Path(args.basedir))
+    if args.basedir == 'none':
+        logger.error("No base directory provided. Please use '--basedir' to specify the base directory.")
+        sys.exit(1)
+    else:
+        manager = RoadmapManager(base_dir=args.basedir)
 
     if args.action == "create":
         if args.way == 'normal':

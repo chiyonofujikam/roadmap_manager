@@ -5,8 +5,13 @@ Tests for the RoadmapManager class including initialization,
 interface creation, deletion, pointage export, and LC updates.
 """
 import xml.etree.ElementTree as ET
+from pathlib import Path
+import shutil
+import tempfile
+
 from openpyxl import Workbook, load_workbook
 
+import roadmap.roadmap as roadmap_module
 from roadmap.roadmap import RoadmapManager
 
 
@@ -198,6 +203,40 @@ class TestCreateInterfaces:
         assert len(ws.data_validations.dataValidation) == 4
         wb.close()
 
+    def test_create_interfaces_fast_template_permission_error(self, setup_test_environment, monkeypatch):
+        """Cover PermissionError branch when reading template bytes in fast mode."""
+        tmp_path = setup_test_environment
+        manager = RoadmapManager(tmp_path)
+
+        original_read_bytes = Path.read_bytes
+
+        def fake_read_bytes(path: Path, *args, **kwargs):
+            if path == manager.template_file:
+                raise PermissionError("template locked")
+            return original_read_bytes(path, *args, **kwargs)
+
+        monkeypatch.setattr(roadmap_module.Path, "read_bytes", fake_read_bytes)
+
+        # Should return early without raising
+        manager.create_interfaces_fast(max_workers=1)
+
+    def test_create_interfaces_template_permission_error(self, setup_test_environment, monkeypatch):
+        """Cover PermissionError branch in sequential create_interfaces when template is locked."""
+        tmp_path = setup_test_environment
+        manager = RoadmapManager(tmp_path)
+
+        original_load = roadmap_module.load_workbook
+
+        def fake_load(path, *args, **kwargs):
+            if Path(path) == manager.template_file:
+                raise PermissionError("locked")
+            return original_load(path, *args, **kwargs)
+
+        monkeypatch.setattr(roadmap_module, "load_workbook", fake_load)
+
+        # Should log an error and return without raising
+        manager.create_interfaces()
+
 
 class TestDeleteInterfaces:
     """Tests for interface deletion methods."""
@@ -263,6 +302,42 @@ class TestDeleteInterfaces:
 
         # Should complete without error
         manager.delete_and_archive_interfaces(archive=True)
+
+    def test_delete_and_archive_handles_archive_error(self, setup_test_environment_with_interfaces, monkeypatch):
+        """Cover error branch when archiving RM_Collaborateurs fails."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        def fail_zip(folder, dest):
+            raise RuntimeError("zip failed")
+
+        monkeypatch.setattr(roadmap_module, "zip_folder", fail_zip)
+
+        # With archive=True an error while archiving should cause early return
+        manager.delete_and_archive_interfaces(archive=True)
+
+        # RM folder should still exist because delete phase was not reached
+        assert manager.rm_folder.exists()
+
+    def test_delete_and_archive_handles_deleted_zip_error(self, setup_test_environment_with_interfaces, monkeypatch):
+        """Cover error branch when creating Deleted zip fails."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        original_zip = roadmap_module.zip_folder
+
+        def selective_zip(src, dest):
+            # Let archive phase succeed, fail only for Deleted_RM_Collaborateurs_*.zip
+            if "Deleted_RM_Collaborateurs_" in dest.name:
+                raise RuntimeError("deleted zip error")
+            return original_zip(src, dest)
+
+        monkeypatch.setattr(roadmap_module, "zip_folder", selective_zip)
+
+        manager.delete_and_archive_interfaces(archive=True)
+
+        # RM folder should still exist because error happened during deleted-zip phase
+        assert manager.rm_folder.exists()
 
 
 class TestDeleteMissingCollaborators:
@@ -349,6 +424,147 @@ class TestDeleteMissingCollaborators:
         archives = list(deleted_folder.glob("Deleted_Missing_*.zip"))
         assert len(archives) > 0
 
+    def test_delete_missing_collaborators_folder_missing(self, setup_test_environment_with_interfaces, caplog):
+        """Cover branch where RM_Collaborateurs folder does not exist."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Remove folder before calling
+        shutil.rmtree(manager.rm_folder)
+
+        with caplog.at_level("WARNING"):
+            manager.delete_missing_collaborators()
+
+        assert "[DELETE_MISSING_COLLABORATORS] RM_Collaborateurs folder does not exist" in caplog.text
+
+    def test_delete_missing_collaborators_no_collaborators(self, setup_test_environment_with_interfaces, caplog):
+        """Cover branch where collabs.xml exists but has no collaborators."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <collaborators>
+        </collaborators>"""
+        (tmp_path / "collabs.xml").write_text(xml_content, encoding="utf-8")
+
+        with caplog.at_level("WARNING"):
+            manager.delete_missing_collaborators()
+
+        assert "[DELETE_MISSING_COLLABORATORS] No collaborators found in XML. Skipping cleanup." in caplog.text
+
+    def test_delete_missing_collaborators_no_existing_files(self, setup_test_environment, caplog):
+        """Cover branch where RM_Collaborateurs has no .xlsx files."""
+        tmp_path = setup_test_environment
+        manager = RoadmapManager(tmp_path)
+
+        rm_folder = manager.rm_folder
+        # Ensure folder exists but remove any files
+        for f in rm_folder.glob("*.xlsx"):
+            f.unlink()
+
+        # Create collabs.xml with collaborators so get_collaborators is non-empty
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <collaborators>
+            <collaborator>CLIGNIEZ Yann</collaborator>
+        </collaborators>"""
+        (tmp_path / "collabs.xml").write_text(xml_content, encoding="utf-8")
+
+        with caplog.at_level("INFO"):
+            manager.delete_missing_collaborators()
+
+        assert "[DELETE_MISSING_COLLABORATORS] No files found in RM_Collaborateurs folder" in caplog.text
+
+    def test_delete_missing_collaborators_zip_error_and_cleanup_warning(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover zip-creation error and temp-folder cleanup warning branches."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        rm_folder = manager.rm_folder
+        deleted_folder = manager.deleted_folder
+
+        # Create orphan files so there is something to delete
+        orphan1 = rm_folder / "RM_Orphan1.xlsx"
+        orphan2 = rm_folder / "RM_Orphan2.xlsx"
+        wb = Workbook()
+        wb.active.title = "POINTAGE"
+        wb.save(orphan1)
+        wb.save(orphan2)
+        wb.close()
+
+        # collabs.xml lists no orphans, so orphans become files_to_delete
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <collaborators>
+            <collaborator>CLIGNIEZ Yann</collaborator>
+        </collaborators>"""
+        (tmp_path / "collabs.xml").write_text(xml_content, encoding="utf-8")
+
+        # Force zip_folder to fail when creating Deleted_Missing_*.zip
+        original_zip = roadmap_module.zip_folder
+
+        def failing_zip(src, dest):
+            if "Deleted_Missing_RM_collaborators_" in dest.name:
+                raise RuntimeError("zip error")
+            return original_zip(src, dest)
+
+        monkeypatch.setattr(roadmap_module, "zip_folder", failing_zip)
+
+        # Also make shutil.rmtree for temp folder fail to hit cleanup warning
+        original_rmtree = shutil.rmtree
+
+        def failing_rmtree(path, *args, **kwargs):
+            if "missing_collabs_" in str(path):
+                raise RuntimeError("rmtree error")
+            return original_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr(roadmap_module.shutil, "rmtree", failing_rmtree)
+
+        with caplog.at_level("ERROR"):
+            manager.delete_missing_collaborators()
+
+        # Even though archive creation failed, deletion should have proceeded
+        assert not orphan1.exists() or not orphan2.exists()
+        assert "Error creating zip archive" in caplog.text
+
+    def test_delete_missing_collaborators_unlink_permission_and_error(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover PermissionError and generic Exception branches during unlink."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        rm_folder = manager.rm_folder
+
+        orphan1 = rm_folder / "RM_OrphanPerm.xlsx"
+        orphan2 = rm_folder / "RM_OrphanErr.xlsx"
+        wb = Workbook()
+        wb.active.title = "POINTAGE"
+        wb.save(orphan1)
+        wb.save(orphan2)
+        wb.close()
+
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <collaborators>
+            <collaborator>CLIGNIEZ Yann</collaborator>
+        </collaborators>"""
+        (tmp_path / "collabs.xml").write_text(xml_content, encoding="utf-8")
+
+        # Patch Path.unlink to raise different exceptions per orphan
+        original_unlink = Path.unlink
+
+        def custom_unlink(path):
+            if path == orphan1:
+                raise PermissionError("locked")
+            if path == orphan2:
+                raise RuntimeError("generic error")
+            return original_unlink(path)
+
+        monkeypatch.setattr(roadmap_module.Path, "unlink", custom_unlink)
+
+        with caplog.at_level("WARNING"):
+            manager.delete_missing_collaborators()
+
+        assert "[DELETE_MISSING_COLLABORATORS] Cannot delete RM_OrphanPerm.xlsx - file may be open in Excel" in caplog.text
+        # Error for orphan2 should be logged at ERROR level
+        assert "[DELETE_MISSING_COLLABORATORS] Error deleting RM_OrphanErr.xlsx: generic error" in caplog.text
+
 
 class TestPointage:
     """Tests for pointage export functionality."""
@@ -412,6 +628,20 @@ class TestPointage:
 
         # Should still work
         assert result is True
+
+    def test_pointage_rm_folder_missing_logs_error(self, setup_test_environment_with_data, caplog):
+        """Cover branch where RM_Collaborateurs folder is missing."""
+        tmp_path = setup_test_environment_with_data
+        manager = RoadmapManager(tmp_path)
+
+        # Remove the RM_Collaborateurs folder after setup
+        shutil.rmtree(manager.rm_folder)
+
+        with caplog.at_level("ERROR"):
+            result = manager.pointage()
+
+        assert result is False
+        assert "RM_Collaborateurs folder not found" in caplog.text
 
 
 class TestUpdateLc:
@@ -495,6 +725,171 @@ class TestUpdateLc:
 
         assert len(ws.data_validations.dataValidation) == 4
         collab_wb.close()
+
+    def test_update_lc_all_ok_false_logs_error(self, tmp_path, caplog):
+        """Cover branch where required files are missing (all_ok is False)."""
+        manager = RoadmapManager(tmp_path)
+
+        assert manager.all_ok is False
+
+        with caplog.at_level("ERROR"):
+            manager.update_lc()
+
+        assert "[UPDATE_LC] Required files are missing. Cannot proceed." in caplog.text
+
+    def test_update_lc_template_update_exception(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover template update error branch inside update_lc."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Prepare LC.xlsx with simple data
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+        ws["B2"] = "Key1"
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        original_update = manager._update_lc_in_file
+
+        def failing_update(file_path, lc_data):
+            if Path(file_path) == manager.template_file:
+                raise RuntimeError("template error")
+            return original_update(file_path, lc_data)
+
+        manager._update_lc_in_file = failing_update
+
+        with caplog.at_level("ERROR"):
+            manager.update_lc()
+
+        assert "[UPDATE_LC] Error updating template file: template error" in caplog.text
+
+    def test_update_lc_rm_file_update_exception(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover collaborator file update error branch inside update_lc."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Prepare LC.xlsx with simple data
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+        ws["B2"] = "Key1"
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        original_update = manager._update_lc_in_file
+
+        def failing_update(file_path, lc_data):
+            # Let template update succeed; fail for first RM_ file
+            if Path(file_path).name.startswith("RM_"):
+                raise RuntimeError("rm update error")
+            return original_update(file_path, lc_data)
+
+        manager._update_lc_in_file = failing_update
+
+        with caplog.at_level("ERROR"):
+            manager.update_lc()
+
+        assert "[UPDATE_LC] Error updating RM_CLIGNIEZ Yann.xlsx: rm update error" in caplog.text
+
+    def test_update_lc_no_data_logs_warning(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover branch where LC.xlsx exists but load_lc_excel returns no data."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Create LC.xlsx but force loader to return empty list
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        monkeypatch.setattr(roadmap_module, "load_lc_excel", lambda base_dir: [])
+
+        with caplog.at_level("WARNING"):
+            manager.update_lc()
+
+        assert "[UPDATE_LC] No LC data found in LC.xlsx. Nothing to update." in caplog.text
+
+    def test_update_lc_in_file_handles_copy_permission_error(self, setup_test_environment_with_interfaces, monkeypatch):
+        """Cover PermissionError branch in _update_lc_in_file copy step."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        target_file = manager.template_file
+
+        def fake_copy2(src, dst, *args, **kwargs):
+            if Path(src) == target_file:
+                raise PermissionError("locked")
+            return shutil.copy2(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(roadmap_module.shutil, "copy2", fake_copy2)
+
+        # Should not raise even if copy fails
+        manager._update_lc_in_file(target_file, [["Key", "Label"]])
+
+    def test_update_lc_in_file_missing_lc_sheet(self, tmp_path):
+        """Cover branch where LC sheet is missing from workbook."""
+        # Create simple workbook without LC sheet
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Other"
+        excel_path = tmp_path / "no_lc.xlsx"
+        wb.save(excel_path)
+        wb.close()
+
+        manager = RoadmapManager(tmp_path)
+        # Mark all_ok to True so helper can run; template/synthese not required here
+        manager.all_ok = True
+
+        # Should not raise even though LC sheet is missing
+        manager._update_lc_in_file(excel_path, [["Key", "Label"]])
+
+    def test_update_lc_in_file_generic_exception_logs_error(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover generic exception handler inside _update_lc_in_file."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        target_file = manager.template_file
+
+        # Force load_workbook on temp_path to raise a generic exception
+        original_load = roadmap_module.load_workbook
+
+        def failing_load(path, *args, **kwargs):
+            # _update_lc_in_file loads from the temp copy, not from target_file itself.
+            # We treat any path not equal to target_file as the temp one and raise.
+            if Path(path) != target_file:
+                raise RuntimeError("load error")
+            return original_load(path, *args, **kwargs)
+
+        monkeypatch.setattr(roadmap_module, "load_workbook", failing_load)
+
+        with caplog.at_level("ERROR"):
+            manager._update_lc_in_file(target_file, [["Key", "Label"]])
+
+        assert f"[UPDATE_LC] Error updating LC in {target_file.name}: load error" in caplog.text
+
+    def test_update_lc_in_file_tempfile_unlink_warning(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover warning branch when temporary file cannot be deleted."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Patch Path.unlink used inside roadmap_module to always fail for temp files
+        original_unlink = roadmap_module.Path.unlink
+
+        def failing_unlink(path):
+            # Fail only for files in the system temp directory to avoid impacting test data
+            tmpdir = Path(tempfile.gettempdir())
+            if tmpdir in Path(path).parents:
+                raise PermissionError("cannot delete temp")
+            return original_unlink(path)
+
+        monkeypatch.setattr(roadmap_module.Path, "unlink", failing_unlink)
+
+        with caplog.at_level("WARNING"):
+            manager._update_lc_in_file(manager.template_file, [["Key", "Label"]])
+
+        assert "Could not delete temporary file" in caplog.text
 
 
 class TestEdgeCases:
