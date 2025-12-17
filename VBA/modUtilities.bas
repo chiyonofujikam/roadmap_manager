@@ -394,3 +394,157 @@ Sub CleanupGestionInterfaces()
         i = i + 1
     Next row
 End Sub
+
+Function UpdateLCInWorkbook(targetPath As String, wsSource As Worksheet) As Boolean
+    Dim wb As Workbook
+    Dim wsDest As Worksheet
+    Dim lastRow As Long
+    Dim destRange As Range
+    Dim fso As Object
+    Dim win As Window
+
+    UpdateLCInWorkbook = False
+    On Error GoTo CleanExit
+
+    ' Check if target file exists
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If Not fso.FileExists(targetPath) Then Exit Function
+    Set fso = Nothing
+
+    ' Open workbook with minimal overhead
+    Set wb = Workbooks.Open(targetPath, UpdateLinks:=False, ReadOnly:=False, _
+                            Notify:=False, AddToMru:=False)
+    If wb Is Nothing Then Exit Function
+    
+    ' Hide window immediately
+    If wb.Windows.Count > 0 Then
+        wb.Windows(1).Visible = False
+    End If
+
+    ' Get LC sheet
+    Set wsDest = wb.Sheets("LC")
+    If wsDest Is Nothing Then GoTo CleanExit
+
+    ' Find last used row in source LC
+    If Application.WorksheetFunction.CountA(wsSource.Cells) = 0 Then GoTo CleanExit
+    lastRow = wsSource.UsedRange.Rows(wsSource.UsedRange.Rows.Count).Row
+    If lastRow < 2 Then GoTo CleanExit
+
+    ' Set destination range
+    Set destRange = wsDest.Range("B2:I" & lastRow)
+    
+    ' Set text format for columns B:H only (prevents date conversion for text values)
+    ' Column I stays as Date format
+    wsDest.Range("B2:H" & lastRow).NumberFormat = "@"
+    wsDest.Range("I2:I" & lastRow).NumberFormat = "dd/mm/yyyy"
+    
+    ' Use Copy/PasteSpecial - fastest method for large ranges
+    wsSource.Range("B2:I" & lastRow).Copy
+    destRange.PasteSpecial Paste:=xlPasteValues, Operation:=xlNone, SkipBlanks:=False, Transpose:=False
+    Application.CutCopyMode = False
+
+    ' Make window visible before closing
+    If wb.Windows.Count > 0 Then
+        wb.Windows(1).Visible = True
+    End If
+    
+    wb.Close SaveChanges:=True
+    UpdateLCInWorkbook = True
+    Exit Function
+
+CleanExit:
+    On Error Resume Next
+    Application.CutCopyMode = False
+    If Not wb Is Nothing Then
+        If wb.Windows.Count > 0 Then
+            wb.Windows(1).Visible = True
+        End If
+        wb.Close SaveChanges:=False
+    End If
+End Function
+
+Sub FixHiddenWindows()
+    Dim baseDir As String
+    Dim templatePath As String
+    Dim rmFolder As String
+    Dim fileName As String
+    Dim filePath As String
+    Dim wb As Workbook
+    Dim win As Window
+    Dim fileCount As Long
+    Dim fixedCount As Long
+    Dim fileList As Collection
+    Dim fso As Object
+
+    baseDir = GetBaseDir()
+    If baseDir = "" Then Exit Sub
+
+    templatePath = baseDir & "\RM_template.xlsx"
+    rmFolder = baseDir & "\RM_Collaborateurs"
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    On Error GoTo ErrorHandler
+
+    fixedCount = 0
+
+    ' Fix template file
+    On Error Resume Next
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If fso.FileExists(templatePath) Then
+        Set wb = Workbooks.Open(templatePath, UpdateLinks:=False, ReadOnly:=False)
+        If Not wb Is Nothing Then
+            For Each win In wb.Windows
+                win.Visible = True
+            Next win
+            wb.Close SaveChanges:=True
+            fixedCount = fixedCount + 1
+        End If
+    End If
+    Set fso = Nothing
+    On Error GoTo ErrorHandler
+
+    ' Collect all RM files
+    Set fileList = New Collection
+    fileName = Dir(rmFolder & "\RM_*.xlsx")
+    Do While fileName <> ""
+        If Left$(fileName, 2) <> "~$" Then
+            fileList.Add rmFolder & "\" & fileName
+        End If
+        fileName = Dir()
+    Loop
+
+    ' Fix each RM file
+    For fileCount = 1 To fileList.Count
+        filePath = fileList(fileCount)
+        On Error Resume Next
+        Set fso = CreateObject("Scripting.FileSystemObject")
+        If fso.FileExists(filePath) Then
+            Set wb = Workbooks.Open(filePath, UpdateLinks:=False, ReadOnly:=False)
+            If Not wb Is Nothing Then
+                For Each win In wb.Windows
+                    win.Visible = True
+                Next win
+                wb.Close SaveChanges:=True
+                fixedCount = fixedCount + 1
+            End If
+        End If
+        Set fso = Nothing
+        On Error GoTo ErrorHandler
+    Next fileCount
+
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+
+    MsgBox "Fixed window visibility for " & fixedCount & " file(s).", vbInformation, "Fix Complete"
+
+    Exit Sub
+
+ErrorHandler:
+    On Error Resume Next
+    If Not wb Is Nothing Then
+        wb.Close SaveChanges:=False
+    End If
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+End Sub

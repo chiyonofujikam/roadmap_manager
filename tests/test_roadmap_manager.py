@@ -15,6 +15,12 @@ import roadmap.roadmap as roadmap_module
 from roadmap.roadmap import RoadmapManager
 
 
+# Module-level function for pickling in multiprocessing tests
+def _failing_build_interface(template_bytes, output_path, collab):
+    """Mock build_interface that raises an exception for testing."""
+    raise RuntimeError("build failed")
+
+
 class TestRoadmapManagerInit:
     """Tests for RoadmapManager initialization."""
 
@@ -943,3 +949,247 @@ class TestEdgeCases:
         rm_folder = tmp_path / "RM_Collaborateurs"
         assert (rm_folder / "RM_NAZIH Imane.xlsx").exists()
         assert (rm_folder / "RM_YAHYA Oumaima.xlsx").exists()
+
+
+class TestCreateInterfacesFastCoverage:
+    """Additional tests for create_interfaces_fast() to cover missing lines."""
+
+    def test_create_interfaces_fast_empty_collaborators(self, tmp_path, caplog):
+        """Cover empty collaborators list branch in create_interfaces_fast()."""
+        # Create required files
+        (tmp_path / "Synthèse_RM_CE.xlsm").touch()
+
+        template = Workbook()
+        template.active.title = "POINTAGE"
+        template.create_sheet("LC")
+        template.save(tmp_path / "RM_template.xlsx")
+        template.close()
+
+        # Create empty collabs.xml
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <collaborators>
+        </collaborators>"""
+        (tmp_path / "collabs.xml").write_text(xml_content, encoding="utf-8")
+
+        manager = RoadmapManager(tmp_path)
+        with caplog.at_level("INFO"):
+            manager.create_interfaces_fast()
+
+        assert "[CREATE_INTERFACES] the list of CE is empty" in caplog.text
+
+    def test_create_interfaces_fast_file_already_exists_debug(self, setup_test_environment_with_interfaces, caplog):
+        """Cover debug log when file already exists in create_interfaces_fast()."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Recreate collabs.xml since it was deleted
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <collaborators>
+            <collaborator>CLIGNIEZ Yann</collaborator>
+            <collaborator>GANI Karim</collaborator>
+            <collaborator>MOUHOUT Marouane</collaborator>
+        </collaborators>"""
+        (tmp_path / "collabs.xml").write_text(xml_content, encoding="utf-8")
+
+        # Files already exist from fixture
+        with caplog.at_level("DEBUG"):
+            manager.create_interfaces_fast(max_workers=1)
+
+        assert "[CREATE_INTERFACES] File already exists:" in caplog.text
+
+    def test_create_interfaces_fast_all_files_exist(self, setup_test_environment_with_interfaces, caplog):
+        """Cover branch when all files already exist in create_interfaces_fast()."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Recreate collabs.xml since it was deleted
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <collaborators>
+            <collaborator>CLIGNIEZ Yann</collaborator>
+            <collaborator>GANI Karim</collaborator>
+            <collaborator>MOUHOUT Marouane</collaborator>
+        </collaborators>"""
+        (tmp_path / "collabs.xml").write_text(xml_content, encoding="utf-8")
+
+        with caplog.at_level("INFO"):
+            manager.create_interfaces_fast(max_workers=1)
+
+        assert "[CREATE_INTERFACES] All collaborator files already exist. Nothing to create." in caplog.text
+
+    def test_create_interfaces_fast_exception_in_parallel(self, setup_test_environment, monkeypatch, caplog):
+        """Cover exception handling branch in parallel processing."""
+        tmp_path = setup_test_environment
+        manager = RoadmapManager(tmp_path)
+
+        # Mock build_interface in both helpers and roadmap modules
+        # ProcessPoolExecutor needs the function to be picklable and the same object
+        import roadmap.helpers as helpers_module
+        
+        monkeypatch.setattr(helpers_module, "build_interface", _failing_build_interface)
+        monkeypatch.setattr(roadmap_module, "build_interface", _failing_build_interface)
+
+        with caplog.at_level("ERROR"):
+            manager.create_interfaces_fast(max_workers=1)
+
+        assert "error: build failed" in caplog.text
+
+
+class TestDeleteInterfacesCoverage:
+    """Additional tests for delete_and_archive_interfaces() to cover missing lines."""
+
+    def test_delete_nonexistent_folder_warning(self, tmp_path, caplog):
+        """Cover warning branch when RM_Collaborateurs doesn't exist."""
+        (tmp_path / "Synthèse_RM_CE.xlsm").touch()
+        (tmp_path / "RM_template.xlsx").touch()
+
+        manager = RoadmapManager(tmp_path)
+        # Remove the folder if it was created during init
+        if manager.rm_folder.exists():
+            shutil.rmtree(manager.rm_folder)
+
+        with caplog.at_level("WARNING"):
+            manager.delete_and_archive_interfaces(archive=False)
+
+        assert "[DELETE_INTERFACES] RM_Collaborateurs folder does not exist" in caplog.text
+
+    def test_delete_empty_folder_exception(self, setup_test_environment, monkeypatch, caplog):
+        """Cover exception branch when removing empty folder fails."""
+        tmp_path = setup_test_environment
+        manager = RoadmapManager(tmp_path)
+
+        # Mock rmtree_with_retry to raise an exception
+        def failing_rmtree(path):
+            raise RuntimeError("rmtree failed")
+
+        monkeypatch.setattr(roadmap_module, "rmtree_with_retry", failing_rmtree)
+
+        with caplog.at_level("ERROR"):
+            manager.delete_and_archive_interfaces(archive=False)
+
+        assert "[DELETE_INTERFACES] Error removing empty folder: rmtree failed" in caplog.text
+
+    def test_delete_rmtree_returns_false_warning(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover warning branch when rmtree_with_retry returns False."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Mock rmtree_with_retry to return False
+        def false_rmtree(path):
+            return False
+
+        monkeypatch.setattr(roadmap_module, "rmtree_with_retry", false_rmtree)
+
+        with caplog.at_level("WARNING"):
+            manager.delete_and_archive_interfaces(archive=False)
+
+        assert "[DELETE_INTERFACES] Could not remove original folder, but zip was created" in caplog.text
+
+
+class TestPointageCoverage:
+    """Additional tests for pointage() to cover missing lines."""
+
+    def test_pointage_empty_row_break(self, setup_test_environment):
+        """Cover break branch when hitting empty row in pointage()."""
+        tmp_path = setup_test_environment
+        manager = RoadmapManager(tmp_path)
+
+        rm_folder = tmp_path / "RM_Collaborateurs"
+
+        # Create interface file with data followed by explicitly empty row
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "POINTAGE"
+        ws["B1"] = "CLIGNIEZ Yann"
+        ws["K1"] = 8.0
+
+        # Add data row (row 4)
+        ws["A4"] = "CLIGNIEZ Yann"
+        ws["B4"] = "2024-W01"
+        ws["C4"] = 8
+        ws["D4"] = "Week 1"
+        ws["E4"] = "KEY001"
+        ws["F4"] = "Label 1"
+        ws["G4"] = "Function 1"
+        ws["H4"] = 8.0
+        ws["I4"] = "Comment"
+        ws["J4"] = "Project A"
+        ws["K4"] = "Task 1"
+
+        # Explicitly set row 5 to None values to ensure it's detected as empty
+        # This ensures the break statement at line 450 is executed
+        for col in range(1, 12):  # Columns A-K (1-11)
+            cell = ws.cell(row=5, column=col)
+            cell.value = None
+
+        wb.create_sheet("LC")
+        wb.save(rm_folder / "RM_CLIGNIEZ Yann.xlsx")
+        wb.close()
+
+        result = manager.pointage()
+
+        # Should process only one row (row 4) and break at row 5
+        assert result is True
+        xml_output = tmp_path / "pointage_output.xml"
+        assert xml_output.exists()
+        tree = ET.parse(xml_output)
+        root = tree.getroot()
+        rows = root.findall("row")
+        # Should have exactly 1 row (row 4), row 5 should trigger break
+        assert len(rows) == 1
+
+
+class TestUpdateLcCoverage:
+    """Additional tests for update_lc() to cover missing lines."""
+
+    def test_update_lc_copy_generic_exception(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover generic exception branch when copying file in update_lc()."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Create LC.xlsx
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+        ws["B2"] = "NewKey"
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        # Mock shutil.copy2 to raise a generic exception (not PermissionError)
+        original_copy2 = roadmap_module.shutil.copy2
+
+        def failing_copy2(src, dst, *args, **kwargs):
+            # Only fail for collaborator files, not template
+            if Path(src).name.startswith("RM_"):
+                raise RuntimeError("copy failed")
+            return original_copy2(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(roadmap_module.shutil, "copy2", failing_copy2)
+
+        with caplog.at_level("WARNING"):
+            manager.update_lc()
+
+        assert "[UPDATE_LC] Error copying" in caplog.text
+
+    def test_update_lc_data_validation_exception(self, setup_test_environment_with_interfaces, monkeypatch, caplog):
+        """Cover exception branch when recreating data validation fails."""
+        tmp_path = setup_test_environment_with_interfaces
+        manager = RoadmapManager(tmp_path)
+
+        # Create LC.xlsx
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+        ws["B2"] = "NewKey"
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        # Mock add_data_validations_to_sheet to raise an exception
+        def failing_add_validations(ws, start_row):
+            raise RuntimeError("validation failed")
+
+        monkeypatch.setattr(roadmap_module, "add_data_validations_to_sheet", failing_add_validations)
+
+        with caplog.at_level("ERROR"):
+            manager.update_lc()
+
+        assert "[UPDATE_LC] Error recreating data validation" in caplog.text

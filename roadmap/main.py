@@ -15,13 +15,11 @@ The module integrates with Excel files using openpyxl, and can be called from bo
 
 Author: Mustapha EL KAMILI
 """
-import platform
 import sys
-from pathlib import Path
 
-
-from roadmap.helpers import (get_parser, logger)
+from roadmap.helpers import get_parser, logger
 from roadmap.roadmap import RoadmapManager
+
 
 def main() -> None:
     """
@@ -78,7 +76,6 @@ def main() -> None:
         except Exception as e:
             logger.error(f"Fatal error in update_lc: {e}", exc_info=True)
             sys.exit(1)
-
 
 def run() -> None:
     """

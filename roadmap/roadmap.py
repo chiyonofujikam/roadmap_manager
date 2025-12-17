@@ -25,8 +25,6 @@ from roadmap.helpers import (add_data_validations_to_sheet, build_interface,
                              get_collaborators, load_lc_excel, logger,
                              rmtree_with_retry, write_xml, zip_folder)
 
-RG = "#FF0000"
-VR = "#00B050"
 
 class RoadmapManager:
     """

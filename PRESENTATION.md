@@ -95,7 +95,6 @@ base_directory/
 │
 ├── RM_template.xlsx                   <── Template for new interfaces
 │
-├── LC.xlsx                            <── Temp file (VBA creates, Python deletes after reading)
 │
 ├── collabs.xml                        <── Temp file (VBA creates, Python deletes after reading)
 │
@@ -141,7 +140,7 @@ flowchart LR
 | Feature | Description |
 |---------|-------------|
 | **Pointage Export** | Collect time tracking from all collaborator files and populate 'SYNTHESE' sheet (via temporary XML) |
-| **LC Update** | Sync conditional lists from VBA to Python (via temporary LC.xlsx) and update all files |
+| **LC Update** | **VBA-only** sync of conditional lists directly from LC sheet to all files (no temporary files) |
 | **Create Interfaces** | Auto-generate Excel files from template (via temporary collabs.xml, 2 processing modes: normal/para) |
 | **Delete & Archive** | Safe removal with timestamped zip backups |
 | **Cleanup Missing** | Remove interface files for collaborators no longer in the list |
@@ -183,7 +182,7 @@ flowchart LR
 | **Data** | Excel files | Final storage and output ('SYNTHESE' sheet, RM_*.xlsx files) |
 | **Communication** | Temporary XML/Excel files | Intermediate files for Python-VBA data exchange (auto-deleted) |
 
-**Note:** XML files (`pointage_output.xml`, `collabs.xml`) and Excel files (`LC.xlsx`) are temporary communication bridges between VBA and Python. They are automatically created, used, and deleted during operations. The final outputs are Excel files and filled sheets.
+**Note:** XML files (`pointage_output.xml`, `collabs.xml`) are temporary communication bridges between VBA and Python. Temporary files are automatically created, used, and deleted during operations. The final outputs are Excel files and filled sheets.
 
 ---
 
@@ -365,68 +364,88 @@ sequenceDiagram
 
 **Purpose:** Synchronize conditional list (LC) across template and all collaborator files.
 
-**Important:** The `LC.xlsx` file is an intermediate communication file created by VBA and read by Python.
+**Important:** LC Update is now **fully implemented in VBA** - no Python CLI or temporary files required. All processing happens directly in Excel.
 
 **Complete Cycle:**
 
 ```
-┌─────────────────────┐                       ┌─────────────────────┐                       ┌─────────────────────┐                       ┌─────────────────────┐
-│                     │                       │                     │                       │                     │                       │                     │
-│   VBA Button        │                       │   VBA Creates       │                       │   Python Reads      │                       │   Python Updates    │
-│   Clicked           │ ───────────────────>  │   Temporary File    │ ───────────────────>  │   Temporary File    │ ───────────────────>  │   All Excel Files   │
-│                     │                       │                     │                       │                     │                       │                     │
-│  Btn_Update_LC()    │                       │  - Read LC sheet    │                       │  - roadmap update   │                       │  - RM_template.xlsx │
-│                     │                       │  - Create LC.xlsx   │                       │  - Read LC.xlsx     │                       │  - RM_A.xlsx        │
-│                     │                       │    (temporary)      │                       │  - Delete LC.xlsx   │                       │  - RM_B.xlsx        │
-│                     │                       │                     │                       │                     │                       │  - ...              │
-│                     │                       │                     │                       │                     │                       │                     │
-└─────────────────────┘                       └─────────────────────┘                       └─────────────────────┘                       └─────────────────────┘
+┌─────────────────────┐                       ┌─────────────────────┐                       ┌─────────────────────┐
+│                     │                       │                     │                       │                     │
+│   VBA Button        │                       │   VBA Reads         │                       │   VBA Updates       │
+│   Clicked           │ ───────────────────>  │   LC Sheet          │ ───────────────────>  │   All Excel Files   │
+│                     │                       │                     │                       │                     │
+│  Btn_Update_LC()    │                       │  - Read LC sheet    │                       │  - RM_template.xlsx │
+│                     │                       │    from Synthese    │                       │  - RM_A.xlsx        │
+│                     │                       │  - Columns B-I      │                       │  - RM_B.xlsx        │
+│                     │                       │  - Starting row 2   │                       │  - ...              │
+│                     │                       │                     │                       │                     │
+└─────────────────────┘                       └─────────────────────┘                       └─────────────────────┘
 ```
 
 **Step-by-Step Process:**
 
-1. **VBA initiates:** User clicks "Update LC" button
-2. **VBA reads LC sheet:** VBA reads the LC sheet from Synthese_RM_CE.xlsm (columns B-I, starting at row 2)
-3. **VBA creates temporary file:** VBA creates `LC.xlsx` file with LC data (temporary communication file)
-4. **VBA calls Python:** VBA executes `roadmap update` command
-5. **Python reads temporary file:** Python reads `LC.xlsx` to get LC data
-6. **Python updates files:** Python updates LC sheet in:
-   - `RM_template.xlsx` (template file)
-   - All files in `RM_Collaborateurs/` folder (RM_*.xlsx)
-7. **Python updates data validation:** Python recreates data validation dropdowns in POINTAGE sheet:
-   - Column D: Week (from POINTAGE!A2:A2)
-   - Column E: Key (from LC!B3:B1000)
-   - Column F: Label (from LC!C3:C1000)
-   - Column G: Function (from LC!D3:D1000)
-8. **Python cleans up:** Python deletes `LC.xlsx` after reading
-9. **VBA confirms:** VBA shows "Update Complete" message
+1. **VBA initiates:** User clicks "Update LC" button → VBA shows confirmation dialog
+2. **VBA validates:** VBA checks if `LC` sheet exists in current workbook
+3. **VBA reads LC sheet:** VBA reads the LC sheet directly from `Synthèse_RM_CE.xlsm` (columns B-I, starting at row 2)
+4. **VBA collects files:** VBA collects all target files (template + all RM_*.xlsx files)
+5. **VBA processes files:** For each file:
+   - Opens workbook (window hidden to prevent flashing)
+   - Clears existing LC data (columns B-I from row 2)
+   - Sets text format to prevent date/number conversion
+   - Copies LC data using optimized Copy/PasteSpecial
+   - Makes window visible before closing
+   - Saves and closes file
+6. **VBA shows progress:** Status bar shows "Updating LC: X of Y files..."
+7. **VBA confirms:** VBA shows completion message with file count and time taken
 
-10. **Complete Workflow**:
+**Complete Workflow**:
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant V as VBA
-    participant LC as LC.xlsx
-    participant P as Python CLI
-    participant F as Excel Files
+    participant LC as LC Sheet<br/>(in Synthese)
+    participant F as Excel Files<br/>(Template + RM_*)
 
     U->>V: Click "Update LC"
-    V->>V: Read LC sheet<br/>(from Synthese_RM_CE.xlsm)
-    V->>LC: Create LC.xlsx<br/>(temporary file)
-    V->>P: Shell: roadmap update
-    P->>LC: Read LC.xlsx
-    P->>F: Update LC sheet<br/>(in template + all RM_*.xlsx)
-    P->>F: Update data validation<br/>(dropdown lists)
-    P->>LC: Delete LC.xlsx
-    P->>V: Return exit code
-    V->>U: Show "Update Complete"
+    V->>U: Confirm update?
+    U->>V: Yes
 
-    Note over LC: Temporary file<br/>Auto-deleted by Python
-    Note over F: Final output:<br/>LC updated in all files
+    V->>LC: Read LC sheet<br/>(columns B-I, row 2+)
+    V->>V: Collect all target files<br/>(template + RM_*.xlsx)
+    
+    loop For each file
+        V->>F: Open file<br/>(window hidden)
+        V->>F: Clear LC data<br/>(columns B-I)
+        V->>F: Set text format<br/>(prevent corruption)
+        V->>F: Copy LC data<br/>(Copy/PasteSpecial)
+        V->>F: Make window visible
+        V->>F: Save & close
+        V->>V: Update progress<br/>"X of Y files..."
+    end
+
+    V->>U: Show "Update Complete"<br/>(with file count & time)
+
+    Note over LC: Source: LC sheet<br/>in Synthese_RM_CE.xlsm
+    Note over F: All files updated<br/>with synchronized LC data
+    Note over V: No Python involved<br/>Pure VBA operation
 ```
 
-**Result:** All Excel files have synchronized LC data and updated dropdown lists. The `LC.xlsx` file is temporary and automatically deleted.
+**Key Features:**
+- **No temporary files:** Reads directly from LC sheet in Synthese workbook
+- **No Python dependency:** Fully implemented in VBA
+- **Performance optimized:** Uses Copy/PasteSpecial for bulk operations
+- **Text format preservation:** Prevents date/number conversion corruption
+- **Progress tracking:** Shows file count and completion time
+- **Window management:** Hides windows during processing, ensures visibility before closing
+- **Calculation disabled:** Speeds up processing by disabling Excel calculation
+
+**Performance:**
+- Processes 20+ files efficiently
+- Shows completion time in success message
+- Status bar updates show progress
+
+**Result:** All Excel files have synchronized LC data. No temporary files are created or deleted. Operation is faster and more reliable than the previous Python-based approach.
 
 ---
 
@@ -773,7 +792,7 @@ sequenceDiagram
 
 The system uses **temporary XML/Excel files** as communication bridges between Python and VBA. These files are automatically created, used, and deleted during operations.
 
-**Key Principle:** XML files (`pointage_output.xml`, `collabs.xml`) and Excel files (`LC.xlsx`) are **intermediate communication files**. They enable data exchange between Python (CLI) and VBA (Excel macros).
+**Key Principle:** XML files (`pointage_output.xml`, `collabs.xml`) are **intermediate communication files**. They enable data exchange between Python (CLI) and VBA (Excel macros) where needed. LC update is now fully VBA-based and requires no temporary files.
 
 #### Communication Flow Overview
 
@@ -793,7 +812,7 @@ flowchart LR
     end
 
     subgraph TEMP1["Temporary File"]
-        T1A["collabs.xml<br/>or<br/>LC.xlsx"]
+        T1A["collabs.xml"]
     end
 
     subgraph PYTHON1["Python CLI"]
@@ -874,14 +893,14 @@ flowchart LR
 | Temporary File | Created By | Read By | Deleted By | Used For |
 |----------------|------------|---------|------------|----------|
 | `collabs.xml` | VBA | Python | Python | Pass collaborator list to create interfaces |
-| `LC.xlsx` | VBA | Python | Python | Pass LC data to update all files |
 | `pointage_output.xml` | Python | VBA | VBA | Pass pointage data to fill 'SYNTHESE' sheet |
 
 **Key Points:**
-- Temporary files are **automatically created** during operations
+- Temporary files are **automatically created** during operations (except LC update, which is now VBA-only)
 - They serve as **communication bridges** between VBA and Python
 - They are **automatically deleted** after use (no manual cleanup needed)
 - Final outputs are **Excel files and filled sheets**, not XML files
+- **LC Update exception:** No temporary files needed - reads directly from LC sheet in Synthese workbook
 
 ---
 
@@ -914,7 +933,7 @@ flowchart TB
 | **Comprehensive logging** | All operations logged to `.logs/roadmap.log` |
 | **Create only MISSING** | Never overwrites existing files - safe to run multiple times |
 | **Temporary file handling** | Uses temp files for safe updates even if files are open |
-| **Temp file cleanup** | Temporary files (collabs.xml, LC.xlsx) automatically deleted after use |
+| **Temp file cleanup** | Temporary files (collabs.xml) automatically deleted after use |
 ---
 
 ## User Personas

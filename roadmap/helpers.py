@@ -21,11 +21,13 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 import zipfile
+from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.datavalidation import (DataValidation,
                                                DataValidationList)
+
 
 def get_exe_dir() -> Path:
     """
@@ -169,7 +171,6 @@ def write_xml(rows: list, xml_output: Path) -> None:
     tree = ET.ElementTree(root)
     tree.write(xml_output, encoding="utf-8", xml_declaration=True)
 
-
 def add_data_validations_to_sheet(ws_pointage, start_row: int = 3) -> None:
     """
     Add standard data validation lists to POINTAGE sheet.
@@ -311,8 +312,6 @@ def load_lc_excel(base_dir: Path | str) -> list[list]:
 
             for cell in row:
                 if cell.value is not None:
-                    from datetime import datetime, date
-                    
                     # Priority 1: If cell is explicitly formatted as text (@), treat as string
                     # Even if openpyxl reads it as a date, we want the text representation
                     if cell.number_format == '@':

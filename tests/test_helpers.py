@@ -500,6 +500,153 @@ class TestLoadLcExcel:
         assert isinstance(lc_data[0][0], str)
         assert isinstance(lc_data[1][0], str)
 
+    def test_load_lc_excel_date_in_text_formatted_cell(self, tmp_path, monkeypatch):
+        """Cover line 324: date/datetime in text-formatted cell (@)."""
+        from datetime import datetime
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+        ws["B2"] = "SomeValue"
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        # Mock iter_rows to return a cell with datetime value and @ format
+        original_load = helpers_module.load_workbook
+        
+        def mock_load_workbook(path, **kwargs):
+            wb = original_load(path, **kwargs)
+            ws = wb["LC"]
+            
+            original_iter_rows = ws.iter_rows
+            
+            def mock_iter_rows(*args, **kw):
+                for row in original_iter_rows(*args, **kw):
+                    new_row = []
+                    for cell in row:
+                        if hasattr(cell, 'coordinate') and cell.coordinate == "B2":
+                            # Create a mock cell with datetime value and @ format
+                            from unittest.mock import Mock
+                            mock_cell = Mock()
+                            mock_cell.value = datetime(2024, 1, 15, 10, 30)  # datetime
+                            mock_cell.number_format = "@"  # Text format
+                            mock_cell.coordinate = "B2"
+                            new_row.append(mock_cell)
+                        else:
+                            new_row.append(cell)
+                    yield new_row
+            
+            ws.iter_rows = mock_iter_rows
+            return wb
+        
+        monkeypatch.setattr(helpers_module, "load_workbook", mock_load_workbook)
+
+        lc_data = load_lc_excel(tmp_path)
+
+        assert len(lc_data) == 1
+        assert isinstance(lc_data[0][0], str)
+
+    def test_load_lc_excel_date_without_text_formatting(self, tmp_path, monkeypatch):
+        """Cover line 334: date (not datetime) without text formatting."""
+        from datetime import date
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+
+        # Create a date value WITHOUT text formatting to hit line 334
+        cell_b2 = ws["B2"]
+        cell_b2.value = date(2024, 1, 15)
+        # Use default date format (not '@')
+
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        # Mock iter_rows to return a cell with date (not datetime) value
+        # This ensures we hit line 334 even though openpyxl might convert dates to datetimes
+        original_load = load_workbook
+        
+        def mock_load_workbook(path, **kwargs):
+            wb = original_load(path, **kwargs)
+            ws = wb["LC"]
+            
+            # Replace iter_rows to return a cell with date object
+            original_iter_rows = ws.iter_rows
+            
+            def mock_iter_rows(*args, **kw):
+                for row in original_iter_rows(*args, **kw):
+                    new_row = []
+                    for cell in row:
+                        if hasattr(cell, 'coordinate') and cell.coordinate == "B2":
+                            # Create a mock cell with date value
+                            from unittest.mock import Mock
+                            mock_cell = Mock()
+                            mock_cell.value = date(2024, 1, 15)  # date, not datetime
+                            mock_cell.number_format = "mm/dd/yyyy"  # not '@'
+                            mock_cell.coordinate = "B2"
+                            new_row.append(mock_cell)
+                        else:
+                            new_row.append(cell)
+                    yield new_row
+            
+            ws.iter_rows = mock_iter_rows
+            return wb
+        
+        monkeypatch.setattr(helpers_module, "load_workbook", mock_load_workbook)
+
+        lc_data = load_lc_excel(tmp_path)
+
+        assert len(lc_data) == 1
+        # Should be formatted as 'YYYY-MM-DD' (line 334)
+        assert lc_data[0][0] == "2024-01-15"
+
+    def test_load_lc_excel_empty_cell_str_after_stripping(self, tmp_path):
+        """Cover line 344: empty cell_str after stripping."""
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+
+        # Row 2: Create a row with one valid cell and one whitespace-only cell
+        # The whitespace cell should become None after stripping (line 344)
+        ws["B2"] = "Key1"  # Valid data to ensure row is added
+        ws["C2"] = "   "  # Only whitespace - should become None after strip
+
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        lc_data = load_lc_excel(tmp_path)
+
+        # Should have one row with valid data in first column and None in second
+        assert len(lc_data) == 1
+        assert lc_data[0][0] == "Key1"
+        assert lc_data[0][1] is None
+
+    def test_load_lc_excel_empty_row_break(self, tmp_path):
+        """Cover line 350: break when has_data is False (empty row)."""
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LC"
+
+        # Row 2: has data
+        ws["B2"] = "Key1"
+        ws["C2"] = "Label1"
+
+        # Row 3: completely empty (all None values) - should trigger break
+        # Row 3 cells are None by default
+
+        # Row 4: has data but should not be processed due to break
+        ws["B4"] = "Key2"
+        ws["C4"] = "Label2"
+
+        wb.save(tmp_path / "LC.xlsx")
+        wb.close()
+
+        lc_data = load_lc_excel(tmp_path)
+
+        # Should only have one row (row 2), row 3 triggers break, row 4 never processed
+        assert len(lc_data) == 1
+        assert lc_data[0][0] == "Key1"
+
     def test_load_lc_excel_logs_error_on_invalid_excel(self, tmp_path, caplog):
         """Cover error branch when LC.xlsx is not a valid Excel file."""
         invalid = tmp_path / "LC.xlsx"

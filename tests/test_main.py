@@ -66,7 +66,6 @@ def dummy_manager_cls(monkeypatch, tmp_path):
 def _set_args(monkeypatch, *args):
     """Helper to simulate command‑line arguments."""
     monkeypatch.setattr(rm_main, "__name__", "roadmap.main")
-    monkeypatch.setattr(rm_main, "platform", rm_main.platform)
     monkeypatch.setattr(rm_main, "sys", rm_main.sys)
     rm_main.sys.argv = ["roadmap", *args]
 

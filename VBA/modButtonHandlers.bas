@@ -227,9 +227,11 @@ Sub Btn_Clear_Synthese()
     Application.ScreenUpdating = True
     Application.StatusBar = False
 
-    ' Clear SYNTHESE sheet if it had data
+    ' Delete SYNTHESE sheet rows if it had data (this removes both data and formatting/colors)
     If hasData Then
-        ws.rows("3:" & lastRow).ClearContents
+        ' Delete rows from bottom to top to avoid shifting issues
+        ' Delete entire rows to remove both content and formatting (colors)
+        ws.rows("3:" & lastRow).Delete Shift:=xlUp
         MsgBox "SYNTHESE sheet successfully archived and cleared." & vbCrLf & _
                "Archive file saved to: " & archivePath, vbInformation, "Archive Complete"
     Else
@@ -379,10 +381,20 @@ ErrorHandler:
 End Sub
 
 Sub Btn_Update_LC()
-    Dim updateCommand As String
     Dim baseDir As String
     Dim confirmation As VbMsgBoxResult
-    Dim exitCode As Long
+    Dim templatePath As String
+    Dim rmFolder As String
+    Dim wsLCSource As Worksheet
+    Dim fileName As String
+    Dim filePath As String
+    Dim fileCount As Long
+    Dim processedCount As Long
+    Dim fileList As Collection
+    Dim startTime As Double
+    Dim endTime As Double
+    Dim elapsedTime As Double
+    Dim timeMessage As String
 
     confirmation = MsgBox("Do you want to proceed with updating the conditional lists (LC)?" & vbCrLf & _
                           "This will update LC in the template and all collaborator files.", _
@@ -392,34 +404,84 @@ Sub Btn_Update_LC()
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
 
+    On Error Resume Next
+    Set wsLCSource = ThisWorkbook.Sheets("LC")
+    On Error GoTo ErrorHandler
+    If wsLCSource Is Nothing Then
+        MsgBox "LC sheet not found in the current workbook.", vbCritical, "Error"
+        Exit Sub
+    End If
+
+    ' Start timing
+    startTime = Timer
+
     Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
     On Error GoTo ErrorHandler
 
-    ' Create LC.xlsx file from LC sheet
-    If Not CreateLCExcel(baseDir) Then
-        MsgBox "Error creating LC.xlsx file. Operation aborted.", vbCritical, "Error"
-        GoTo ErrorHandler
-    End If
+    templatePath = baseDir & "\RM_template.xlsx"
+    rmFolder = baseDir & "\RM_Collaborateurs"
 
-    updateCommand = PYTHONEXE & "--basedir " & """" & baseDir & """" & " update"
-    Application.StatusBar = "Updating conditional lists (LC) in all files..."
-    exitCode = RunCommand(updateCommand)
+    Application.StatusBar = "Updating LC in template and collaborator files..."
+
+    ' Collect all files first
+    Set fileList = New Collection
+    fileList.Add templatePath
+    
+    fileName = Dir(rmFolder & "\RM_*.xlsx")
+    Do While fileName <> ""
+        If Left$(fileName, 2) <> "~$" Then
+            fileList.Add rmFolder & "\" & fileName
+        End If
+        fileName = Dir()
+    Loop
+
+    ' Process all files
+    processedCount = 0
+    For fileCount = 1 To fileList.Count
+        filePath = fileList(fileCount)
+        Application.StatusBar = "Updating LC: " & fileCount & " of " & fileList.Count & " files..."
+        If UpdateLCInWorkbook(filePath, wsLCSource) Then
+            processedCount = processedCount + 1
+        End If
+        ' Allow Excel to process events and stay responsive
+        DoEvents
+    Next fileCount
+
+    ' End timing
+    endTime = Timer
+    elapsedTime = endTime - startTime
+    
+    ' Handle case where timer crossed midnight
+    If elapsedTime < 0 Then elapsedTime = elapsedTime + 86400
+
     Application.StatusBar = False
+    Application.Calculation = xlCalculationAutomatic
+    Application.EnableEvents = True
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
 
-    If exitCode <> 0 Then
-        MsgBox "Error updating LC. Exit code: " & exitCode, vbCritical, "Error"
-        GoTo ErrorHandler
+    ' Format time message
+    If elapsedTime < 60 Then
+        timeMessage = Format(elapsedTime, "0.00") & " seconds"
+    Else
+        timeMessage = Format(Int(elapsedTime / 60), "0") & " minute(s) " & Format(elapsedTime Mod 60, "0.00") & " seconds"
     End If
 
-    MsgBox "LC successfully updated in template and all collaborator files.", vbInformation, "Update Complete"
-
-    Application.ScreenUpdating = True
+    MsgBox "LC successfully updated in template and " & (processedCount - 1) & " collaborator file(s)." & vbCrLf & _
+           "Time taken: " & timeMessage, vbInformation, "Update Complete"
     Exit Sub
 
 ErrorHandler:
+    Application.Calculation = xlCalculationAutomatic
+    Application.EnableEvents = True
+    Application.DisplayAlerts = True
     Application.ScreenUpdating = True
     Application.StatusBar = False
 End Sub
+
 
 Sub Btn_Cleanup_RM()
     Dim cleanupCommand As String
