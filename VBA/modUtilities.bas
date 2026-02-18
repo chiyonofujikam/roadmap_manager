@@ -1,10 +1,5 @@
 Option Explicit
 
-' =============================================================================
-' UTILITY FUNCTIONS
-' Helper functions used by button handlers
-' =============================================================================
-
 Function RunCommand(cmd As String) As Long
     Dim shellObj As Object
     Set shellObj = CreateObject("WScript.Shell")
@@ -14,23 +9,15 @@ End Function
 Function GetBaseDir() As String
     Dim f As FileDialog
 
-    ' Return cached value if already set
     If GLOBAL_BASEDIR <> "" Then
-        If PYTHONEXE = "" Then
-            PYTHONEXE = """" & GLOBAL_BASEDIR & "\script\roadmap.exe" & """" & " "
-        End If
+        If PYTHONEXE = "" Then PYTHONEXE = """" & GLOBAL_BASEDIR & "\script\roadmap.exe" & """" & " "
         GetBaseDir = GLOBAL_BASEDIR
         Exit Function
     End If
 
-    ' Prompt user to select folder
     MsgBox "Please select the base directory"
     Set f = Application.FileDialog(msoFileDialogFolderPicker)
-
-    If f.Show <> -1 Then
-        MsgBox "No folder selected.", vbExclamation
-        Exit Function
-    End If
+    If f.Show <> -1 Then MsgBox "No folder selected.", vbExclamation: Exit Function
 
     GLOBAL_BASEDIR = f.SelectedItems(1)
     PYTHONEXE = """" & GLOBAL_BASEDIR & "\script\roadmap.exe" & """" & " "
@@ -40,8 +27,7 @@ End Function
 Function LoadXMLTable(filePath As String) As Collection
     Dim xml As Object
     Dim rows As Object, rowNode As Object, childNode As Object
-    Dim table As New Collection
-    Dim oneRow As Collection
+    Dim table As New Collection, oneRow As Collection
 
     Set xml = CreateObject("MSXML2.DOMDocument")
     xml.async = False
@@ -65,93 +51,69 @@ Function LoadXMLTable(filePath As String) As Collection
 End Function
 
 Function EscapeXML(text As String) As String
-    Dim result As String
-    Dim i As Long
-    Dim charCode As Integer
-    Dim char As String
+    Dim result As String, i As Long
+    Dim charCode As Integer, char As String
 
     result = ""
-
-    ' Escape XML special characters and remove control characters
     For i = 1 To Len(text)
         charCode = Asc(Mid(text, i, 1))
         char = Mid(text, i, 1)
 
-        ' Skip control characters (except tab, line feed, carriage return)
         If charCode < 32 And charCode <> 9 And charCode <> 10 And charCode <> 13 Then
             ' Skip invalid control characters
         Else
-            ' Escape XML special characters
             Select Case char
-                Case "&"
-                    result = result & "&amp;"
-                Case "<"
-                    result = result & "&lt;"
-                Case ">"
-                    result = result & "&gt;"
-                Case """"
-                    result = result & "&quot;"
-                Case "'"
-                    result = result & "&apos;"
-                Case Else
-                    result = result & char
+                Case "&":  result = result & "&amp;"
+                Case "<":  result = result & "&lt;"
+                Case ">":  result = result & "&gt;"
+                Case """": result = result & "&quot;"
+                Case "'":  result = result & "&apos;"
+                Case Else: result = result & char
             End Select
         End If
     Next i
-
     EscapeXML = result
 End Function
 
 Function CreateCollabsXML(baseDir As String) As Boolean
-    Dim xmlPath As String
+    Dim xmlPath As String, xmlContent As String
     Dim ws As Worksheet
-    Dim row As Long
-    Dim collabName As String
-    Dim xmlContent As String
+    Dim row As Long, collabName As String
     Dim xmlStream As Object
 
-    ' Check if Gestion_Interfaces sheet exists
     On Error Resume Next
-    Set ws = ThisWorkbook.Sheets("Gestion_Interfaces")
+    Set ws = ThisWorkbook.Sheets(SHEET_GESTION_INTERFACES)
     If Err.Number <> 0 Then
         MsgBox "Gestion_Interfaces sheet not found.", vbCritical, "Error"
-        CreateCollabsXML = False
-        Exit Function
+        CreateCollabsXML = False: Exit Function
     End If
     On Error GoTo 0
 
-    ' Create collabs.xml file path
     xmlPath = baseDir & "\collabs.xml"
-    xmlContent = "<?xml version=""1.0"" encoding=""UTF-8""?>" & vbCrLf
-    xmlContent = xmlContent & "<collaborators>" & vbCrLf
+    xmlContent = "<?xml version=""1.0"" encoding=""UTF-8""?>" & vbCrLf & "<collaborators>" & vbCrLf
 
-    ' Read collaborator names from column B, starting at row 3
     row = 3
     Do While True
-        collabName = Trim(ws.Cells(row, 2).value)
+        collabName = Trim(ws.Cells(row, 2).Value)
         If collabName = "" Then Exit Do
-
         xmlContent = xmlContent & "  <collaborator>" & EscapeXML(collabName) & "</collaborator>" & vbCrLf
         row = row + 1
     Loop
-
     xmlContent = xmlContent & "</collaborators>"
 
-    ' Write to file using ADODB.Stream for proper UTF-8 encoding
     On Error Resume Next
     Set xmlStream = CreateObject("ADODB.Stream")
     If Err.Number <> 0 Then
         MsgBox "Error creating file stream: " & Err.Description, vbCritical, "Error"
-        CreateCollabsXML = False
-        Exit Function
+        CreateCollabsXML = False: Exit Function
     End If
     On Error GoTo 0
 
-    xmlStream.Type = 2 ' Text stream
+    xmlStream.Type = 2
     xmlStream.Charset = "UTF-8"
     xmlStream.Open
     xmlStream.WriteText xmlContent
-    xmlStream.SaveToFile xmlPath, 2 ' Overwrite mode
+    xmlStream.SaveToFile xmlPath, 2
     xmlStream.Close
     Set xmlStream = Nothing
 
@@ -159,165 +121,108 @@ Function CreateCollabsXML(baseDir As String) As Boolean
 End Function
 
 Function CreateLCExcel(baseDir As String) As Boolean
-    Dim excelPath As String
-    Dim ws As Worksheet
+    Dim ws As Worksheet, wsNew As Worksheet
     Dim wbNew As Workbook
-    Dim wsNew As Worksheet
-    Dim usedRange As Range
+    Dim excelPath As String
+    Dim i As Long
 
-    ' Check if LC sheet exists
     On Error Resume Next
-    Set ws = ThisWorkbook.Sheets("LC")
+    Set ws = ThisWorkbook.Sheets(SHEET_LC)
     If Err.Number <> 0 Then
         MsgBox "LC sheet not found.", vbCritical, "Error"
-        CreateLCExcel = False
-        Exit Function
+        CreateLCExcel = False: Exit Function
     End If
     On Error GoTo 0
 
-    ' Create LC.xlsx file path
     excelPath = baseDir & "\LC.xlsx"
+    On Error Resume Next: Kill excelPath: On Error GoTo 0
 
-    ' Delete existing file if it exists
-    On Error Resume Next
-    Kill excelPath
-    On Error GoTo 0
-
-    ' Create new workbook
     On Error Resume Next
     Set wbNew = Workbooks.Add
     If Err.Number <> 0 Then
         MsgBox "Error creating new workbook: " & Err.Description, vbCritical, "Error"
-        CreateLCExcel = False
-        Exit Function
+        CreateLCExcel = False: Exit Function
     End If
-    On Error GoTo 0
 
-    ' Copy the entire LC sheet to the new workbook first (before deleting default sheets)
-    On Error Resume Next
     ws.Copy Before:=wbNew.Sheets(1)
     If Err.Number <> 0 Then
         MsgBox "Error copying LC sheet: " & Err.Description, vbCritical, "Error"
         wbNew.Close SaveChanges:=False
-        CreateLCExcel = False
-        Exit Function
+        CreateLCExcel = False: Exit Function
     End If
     On Error GoTo 0
 
-    ' The copied sheet will be the active sheet, rename it if needed
     Set wsNew = wbNew.ActiveSheet
-    If wsNew.Name <> "LC" Then
-        wsNew.Name = "LC"
-    End If
+    If wsNew.Name <> SHEET_LC Then wsNew.Name = SHEET_LC
 
-    ' Convert all formulas to their displayed values (preserves exact displayed values)
-    ' This ensures cells with formulas like "ASSEM.H" show their calculated values
-    ' Read original text values from source sheet to preserve exact format and prevent date conversion
-    On Error Resume Next
-    Dim usedRngSource As Range
-    Dim usedRngDest As Range
-    Dim cellSource As Range
-    Dim cellDest As Range
+    ' Preserve exact displayed values (prevent date conversion)
+    Dim usedRngSource As Range, cellSource As Range
     Dim cellText As String
-    Dim sourceRow As Long, sourceCol As Long
-    
-    ' Get used range from source sheet (original LC sheet)
-    Set usedRngSource = ws.usedRange
-    Set usedRngDest = wsNew.usedRange
-    
-    If Not usedRngSource Is Nothing And Not usedRngDest Is Nothing Then
-        ' Format all destination cells as text FIRST
-        usedRngDest.NumberFormat = "@"
-        
-        ' Read text values from SOURCE sheet and write directly to DESTINATION sheet
-        ' This preserves the exact displayed text, preventing any date conversion
+
+    Set usedRngSource = ws.UsedRange
+    On Error Resume Next
+    If Not usedRngSource Is Nothing Then
+        wsNew.UsedRange.NumberFormat = "@"
         For Each cellSource In usedRngSource
-            If Not isEmpty(cellSource) Then
-                ' Get the displayed text from the original cell (preserves exact format)
-                ' .Text property gives us exactly what the user sees, regardless of internal storage
+            If Not IsEmpty(cellSource) Then
                 cellText = CStr(cellSource.text)
-                
-                ' Calculate corresponding cell in destination sheet
-                sourceRow = cellSource.row
-                sourceCol = cellSource.Column
-                Set cellDest = wsNew.Cells(sourceRow, sourceCol)
-                
-                ' Ensure format is text and write the text value
-                cellDest.NumberFormat = "@"
-                If Len(cellText) > 0 Then
-                    ' Write as text value - the '@' format should prevent date interpretation
-                    cellDest.value = cellText
-                Else
-                    cellDest.value = ""
-                End If
+                With wsNew.Cells(cellSource.Row, cellSource.Column)
+                    .NumberFormat = "@"
+                    .Value = IIf(Len(cellText) > 0, cellText, "")
+                End With
             End If
         Next cellSource
     End If
     On Error GoTo 0
 
-    ' Remove all shapes from the LC sheet (charts, images, buttons, etc.)
+    ' Remove shapes
     On Error Resume Next
-    While wsNew.Shapes.Count > 0
-        wsNew.Shapes(wsNew.Shapes.Count).Delete
-    Wend
+    While wsNew.Shapes.Count > 0: wsNew.Shapes(wsNew.Shapes.Count).Delete: Wend
     On Error GoTo 0
 
-    ' Now delete the default sheets (keeping at least the LC sheet we just copied)
+    ' Delete default sheets
     Application.DisplayAlerts = False
-    Dim i As Long
     For i = wbNew.Sheets.Count To 1 Step -1
-        If wbNew.Sheets(i).Name <> "LC" Then
-            wbNew.Sheets(i).Delete
-        End If
+        If wbNew.Sheets(i).Name <> SHEET_LC Then wbNew.Sheets(i).Delete
     Next i
     Application.DisplayAlerts = True
 
-    ' Save and close the workbook
     On Error Resume Next
     wbNew.SaveAs excelPath, FileFormat:=xlOpenXMLWorkbook
     If Err.Number <> 0 Then
-        MsgBox "Error saving LC.xlsx file: " & Err.Description, vbCritical, "Error"
+        MsgBox "Error saving LC.xlsx: " & Err.Description, vbCritical, "Error"
         wbNew.Close SaveChanges:=False
-        CreateLCExcel = False
-        Exit Function
+        CreateLCExcel = False: Exit Function
     End If
     On Error GoTo 0
 
     wbNew.Close SaveChanges:=False
-
     CreateLCExcel = True
 End Function
 
 Sub ApplySyntheseRowColoring(ws As Worksheet, Optional startRow As Long = 3, _
                              Optional dataLastCol As Long = 11, Optional helperCol As Long = 53, _
                              Optional thresholdVal As Double = 35)
-    Dim lastRow As Long
-    Dim r As Long
+    Dim lastRow As Long, r As Long
     Dim totalVal As Variant
-    Dim targetRange As Range
-    Dim redColor As Long
-    Dim greenColor As Long
+    Dim redColor As Long, greenColor As Long
 
-    redColor = RGB(255, 0, 0)      ' #FF0000
-    greenColor = RGB(0, 176, 80)   ' #00B050
+    redColor = RGB(255, 0, 0)
+    greenColor = RGB(0, 176, 80)
 
-    ' Determine last row using helper column; fall back to column A if empty
-    lastRow = ws.Cells(ws.rows.Count, helperCol).End(xlUp).row
-    If lastRow < startRow Then lastRow = ws.Cells(ws.rows.Count, 1).End(xlUp).row
-
+    lastRow = ws.Cells(ws.Rows.Count, helperCol).End(xlUp).Row
+    If lastRow < startRow Then lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
     If lastRow < startRow Then Exit Sub
 
     For r = startRow To lastRow
-        totalVal = ws.Cells(r, helperCol).value
+        totalVal = ws.Cells(r, helperCol).Value
         If IsNumeric(totalVal) Then
-            Set targetRange = ws.Range(ws.Cells(r, 1), ws.Cells(r, dataLastCol))
             If Val(totalVal) < thresholdVal Then
-                targetRange.Interior.Color = redColor
+                ws.Range(ws.Cells(r, 1), ws.Cells(r, dataLastCol)).Interior.Color = redColor
             Else
-                targetRange.Interior.Color = greenColor
+                ws.Range(ws.Cells(r, 1), ws.Cells(r, dataLastCol)).Interior.Color = greenColor
             End If
         End If
-        ' Clear helper column to keep sheet clean
         ws.Cells(r, helperCol).ClearContents
     Next r
 End Sub
@@ -326,20 +231,19 @@ Sub ImportPointageRows(ws As Worksheet, result As Collection, startRow As Long, 
                        ByRef rowsImported As Long, _
                        Optional dataLastCol As Long = 11, Optional helperCol As Long = 53)
     Dim rowData As Collection
-    Dim c As Long
-    Dim value As Variant
-    Dim r As Long
+    Dim c As Long, r As Long
+    Dim Value As Variant
 
     rowsImported = 0
     r = startRow
 
     For Each rowData In result
         For c = 1 To rowData.Count
-            value = rowData(c)
+            Value = rowData(c)
             If c <= dataLastCol Then
-                ws.Cells(r, c).value = value
+                ws.Cells(r, c).Value = Value
             ElseIf c = 12 Then
-                ws.Cells(r, helperCol).value = value
+                ws.Cells(r, helperCol).Value = Value
             End If
         Next c
         r = r + 1
@@ -347,107 +251,121 @@ Sub ImportPointageRows(ws As Worksheet, result As Collection, startRow As Long, 
     Next rowData
 End Sub
 
+Sub UpdateSyntheseFromLC(wsSynth As Worksheet, wsLC As Worksheet, startRow As Long, endRow As Long)
+    Dim lcDict As Object
+    Dim lcArr As Variant
+    Dim lcLastRow As Long, i As Long, r As Long, matchRow As Long
+    Dim key As String, valE As String, valF As String, valG As String
+    Dim part1 As String, part2 As String
+    Dim posSprint As Long
+
+    lcLastRow = wsLC.Cells(wsLC.Rows.Count, LC_LOOKUP_COL_F).End(xlUp).Row
+    If lcLastRow < LC_LOOKUP_FIRST_ROW Then lcLastRow = LC_LOOKUP_FIRST_ROW - 1
+
+    Set lcDict = CreateObject("Scripting.Dictionary")
+    lcDict.CompareMode = 1
+
+    If lcLastRow >= LC_LOOKUP_FIRST_ROW Then
+        lcArr = wsLC.Range(wsLC.Cells(LC_LOOKUP_FIRST_ROW, LC_LOOKUP_COL_F), _
+                           wsLC.Cells(lcLastRow, LC_LOOKUP_COL_K)).Value
+        For i = 1 To UBound(lcArr, 1)
+            key = Trim(CStr(lcArr(i, 5))) & LC_LOOKUP_KEY_DELIM & Trim(CStr(lcArr(i, 2))) & LC_LOOKUP_KEY_DELIM & _
+                  Trim(CStr(lcArr(i, 1))) & LC_LOOKUP_KEY_DELIM & Trim(CStr(lcArr(i, 6)))
+            If lcDict.Exists(key) Then lcDict(key) = -1 Else lcDict.Add key, LC_LOOKUP_FIRST_ROW + i - 1
+        Next i
+    End If
+
+    For r = startRow To endRow
+        valE = Trim(CStr(wsSynth.Cells(r, SYN_COL_E).Value))
+        valF = Trim(CStr(wsSynth.Cells(r, SYN_COL_F).Value))
+        valG = Trim(CStr(wsSynth.Cells(r, SYN_COL_G).Value))
+
+        posSprint = InStr(1, valE, "Sprint", vbTextCompare)
+        If posSprint = 0 Then
+            wsSynth.Cells(r, SYN_COL_H).ClearContents
+            wsSynth.Cells(r, SYN_COL_I).ClearContents
+        Else
+            part1 = Trim(Left(valE, posSprint - 1))
+            part2 = Trim(Mid(valE, posSprint + 6))
+            key = valG & LC_LOOKUP_KEY_DELIM & valF & LC_LOOKUP_KEY_DELIM & part1 & LC_LOOKUP_KEY_DELIM & part2
+
+            If lcDict.Exists(key) Then
+                matchRow = lcDict(key)
+                If matchRow >= 0 Then
+                    wsSynth.Cells(r, SYN_COL_H).Value = wsLC.Cells(matchRow, LC_LOOKUP_COL_H).Value
+                    wsSynth.Cells(r, SYN_COL_I).Value = wsLC.Cells(matchRow, LC_LOOKUP_COL_I).Value
+                Else
+                    wsSynth.Cells(r, SYN_COL_H).ClearContents
+                    wsSynth.Cells(r, SYN_COL_I).ClearContents
+                End If
+            Else
+                wsSynth.Cells(r, SYN_COL_H).ClearContents
+                wsSynth.Cells(r, SYN_COL_I).ClearContents
+            End If
+        End If
+    Next r
+End Sub
+
 Sub CleanupGestionInterfaces()
     Dim ws As Worksheet
-    Dim row As Long
-    Dim lastRow As Long
-    Dim collabNames As Collection
-    Dim collabName As String
-    Dim i As Long
-    Dim startRow As Long
+    Dim row As Long, lastRow As Long, i As Long
+    Dim collabNames As Collection, collabName As String
 
-    ' Check if Gestion_Interfaces sheet exists
     On Error Resume Next
-    Set ws = ThisWorkbook.Sheets("Gestion_Interfaces")
-    If Err.Number <> 0 Then
-        ' Sheet doesn't exist, exit silently
-        Exit Sub
-    End If
+    Set ws = ThisWorkbook.Sheets(SHEET_GESTION_INTERFACES)
+    If Err.Number <> 0 Then Exit Sub
     On Error GoTo 0
 
-    ' Find the last row with data in column B
-    lastRow = ws.Cells(ws.rows.Count, 2).End(xlUp).row
-
-    ' If no data found or last row is before row 3, exit
+    lastRow = ws.Cells(ws.Rows.Count, 2).End(xlUp).Row
     If lastRow < 3 Then Exit Sub
 
-    ' Collect all non-empty collaborator names from column B (starting at row 3)
     Set collabNames = New Collection
-    startRow = 3
-
-    For row = startRow To lastRow
-        collabName = Trim(ws.Cells(row, 2).value)
-        If collabName <> "" Then
-            collabNames.Add collabName
-        End If
+    For row = 3 To lastRow
+        collabName = Trim(ws.Cells(row, 2).Value)
+        If collabName <> "" Then collabNames.Add collabName
     Next row
 
-    ' Clear all rows from row 3 to lastRow
-    If lastRow >= startRow Then
-        ws.rows(startRow & ":" & lastRow).ClearContents
-    End If
+    If lastRow >= 3 Then ws.Rows("3:" & lastRow).ClearContents
 
-    ' Write back the collected names in a compacted format (no empty rows)
     i = 1
-    For row = startRow To startRow + collabNames.Count - 1
-        ws.Cells(row, 2).value = collabNames(i)
+    For row = 3 To 3 + collabNames.Count - 1
+        ws.Cells(row, 2).Value = collabNames(i)
         i = i + 1
     Next row
 End Sub
 
 Function UpdateLCInWorkbook(targetPath As String, wsSource As Worksheet) As Boolean
-    Dim wb As Workbook
-    Dim wsDest As Worksheet
+    Dim wb As Workbook, wsDest As Worksheet
     Dim lastRow As Long
-    Dim destRange As Range
     Dim fso As Object
-    Dim win As Window
 
     UpdateLCInWorkbook = False
     On Error GoTo CleanExit
 
-    ' Check if target file exists
     Set fso = CreateObject("Scripting.FileSystemObject")
     If Not fso.FileExists(targetPath) Then Exit Function
     Set fso = Nothing
 
-    ' Open workbook with minimal overhead
     Set wb = Workbooks.Open(targetPath, UpdateLinks:=False, ReadOnly:=False, _
                             Notify:=False, AddToMru:=False)
     If wb Is Nothing Then Exit Function
-    
-    ' Hide window immediately
-    If wb.Windows.Count > 0 Then
-        wb.Windows(1).Visible = False
-    End If
+    If wb.Windows.Count > 0 Then wb.Windows(1).Visible = False
 
-    ' Get LC sheet
-    Set wsDest = wb.Sheets("LC")
+    Set wsDest = wb.Sheets(SHEET_LC)
     If wsDest Is Nothing Then GoTo CleanExit
 
-    ' Find last used row in source LC
     If Application.WorksheetFunction.CountA(wsSource.Cells) = 0 Then GoTo CleanExit
     lastRow = wsSource.UsedRange.Rows(wsSource.UsedRange.Rows.Count).Row
     If lastRow < 2 Then GoTo CleanExit
 
-    ' Set destination range
-    Set destRange = wsDest.Range("B2:I" & lastRow)
-    
-    ' Set text format for columns B:H only (prevents date conversion for text values)
-    ' Column I stays as Date format
     wsDest.Range("B2:H" & lastRow).NumberFormat = "@"
     wsDest.Range("I2:I" & lastRow).NumberFormat = "dd/mm/yyyy"
-    
-    ' Use Copy/PasteSpecial - fastest method for large ranges
+
     wsSource.Range("B2:I" & lastRow).Copy
-    destRange.PasteSpecial Paste:=xlPasteValues, Operation:=xlNone, SkipBlanks:=False, Transpose:=False
+    wsDest.Range("B2:I" & lastRow).PasteSpecial Paste:=xlPasteValues
     Application.CutCopyMode = False
 
-    ' Make window visible before closing
-    If wb.Windows.Count > 0 Then
-        wb.Windows(1).Visible = True
-    End If
-    
+    If wb.Windows.Count > 0 Then wb.Windows(1).Visible = True
     wb.Close SaveChanges:=True
     UpdateLCInWorkbook = True
     Exit Function
@@ -456,25 +374,19 @@ CleanExit:
     On Error Resume Next
     Application.CutCopyMode = False
     If Not wb Is Nothing Then
-        If wb.Windows.Count > 0 Then
-            wb.Windows(1).Visible = True
-        End If
+        If wb.Windows.Count > 0 Then wb.Windows(1).Visible = True
         wb.Close SaveChanges:=False
     End If
 End Function
 
 Sub FixHiddenWindows()
-    Dim baseDir As String
-    Dim templatePath As String
-    Dim rmFolder As String
-    Dim fileName As String
-    Dim filePath As String
-    Dim wb As Workbook
-    Dim win As Window
-    Dim fileCount As Long
+    Dim baseDir As String, templatePath As String, rmFolder As String
+    Dim fileName As String, filePath As String
+    Dim wb As Workbook, win As Window
     Dim fixedCount As Long
     Dim fileList As Collection
     Dim fso As Object
+    Dim fileCount As Long
 
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
@@ -488,15 +400,12 @@ Sub FixHiddenWindows()
 
     fixedCount = 0
 
-    ' Fix template file
     On Error Resume Next
     Set fso = CreateObject("Scripting.FileSystemObject")
     If fso.FileExists(templatePath) Then
         Set wb = Workbooks.Open(templatePath, UpdateLinks:=False, ReadOnly:=False)
         If Not wb Is Nothing Then
-            For Each win In wb.Windows
-                win.Visible = True
-            Next win
+            For Each win In wb.Windows: win.Visible = True: Next win
             wb.Close SaveChanges:=True
             fixedCount = fixedCount + 1
         End If
@@ -504,17 +413,13 @@ Sub FixHiddenWindows()
     Set fso = Nothing
     On Error GoTo ErrorHandler
 
-    ' Collect all RM files
     Set fileList = New Collection
     fileName = Dir(rmFolder & "\RM_*.xlsx")
     Do While fileName <> ""
-        If Left$(fileName, 2) <> "~$" Then
-            fileList.Add rmFolder & "\" & fileName
-        End If
+        If Left$(fileName, 2) <> "~$" Then fileList.Add rmFolder & "\" & fileName
         fileName = Dir()
     Loop
 
-    ' Fix each RM file
     For fileCount = 1 To fileList.Count
         filePath = fileList(fileCount)
         On Error Resume Next
@@ -522,9 +427,7 @@ Sub FixHiddenWindows()
         If fso.FileExists(filePath) Then
             Set wb = Workbooks.Open(filePath, UpdateLinks:=False, ReadOnly:=False)
             If Not wb Is Nothing Then
-                For Each win In wb.Windows
-                    win.Visible = True
-                Next win
+                For Each win In wb.Windows: win.Visible = True: Next win
                 wb.Close SaveChanges:=True
                 fixedCount = fixedCount + 1
             End If
@@ -535,16 +438,55 @@ Sub FixHiddenWindows()
 
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-
     MsgBox "Fixed window visibility for " & fixedCount & " file(s).", vbInformation, "Fix Complete"
-
     Exit Sub
 
 ErrorHandler:
     On Error Resume Next
-    If Not wb Is Nothing Then
-        wb.Close SaveChanges:=False
-    End If
+    If Not wb Is Nothing Then wb.Close SaveChanges:=False
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
 End Sub
+
+Function ArchiveSingleSheet(wsSource As Worksheet, archivePath As String, _
+                            Optional removeShapesAndOle As Boolean = True, _
+                            Optional forceSheetName As String = "") As Boolean
+    Dim newWb As Workbook, newWs As Worksheet
+    Dim i As Long
+
+    ArchiveSingleSheet = False
+    On Error GoTo ErrHandler
+    Application.DisplayAlerts = False
+
+    Set newWb = Workbooks.Add
+    wsSource.Copy Before:=newWb.Sheets(1)
+    Set newWs = newWb.Sheets(1)
+
+    If forceSheetName <> "" Then
+        On Error Resume Next: newWs.Name = forceSheetName: On Error GoTo ErrHandler
+    End If
+
+    If removeShapesAndOle Then
+        On Error Resume Next
+        For i = newWs.Shapes.Count To 1 Step -1: newWs.Shapes(i).Delete: Next i
+        For i = newWs.OLEObjects.Count To 1 Step -1: newWs.OLEObjects(i).Delete: Next i
+        On Error GoTo ErrHandler
+    End If
+
+    For i = newWb.Sheets.Count To 1 Step -1
+        If newWb.Sheets(i).Name <> newWs.Name Then newWb.Sheets(i).Delete
+    Next i
+
+    newWb.SaveAs archivePath, xlOpenXMLWorkbook
+    newWb.Close SaveChanges:=False
+
+    Application.DisplayAlerts = True
+    ArchiveSingleSheet = True
+    Exit Function
+
+ErrHandler:
+    On Error Resume Next
+    If Not newWb Is Nothing Then newWb.Close SaveChanges:=False
+    Application.DisplayAlerts = True
+    MsgBox "Error archiving sheet '" & wsSource.Name & "': " & Err.Description, vbCritical, "Archive Error"
+End Function
