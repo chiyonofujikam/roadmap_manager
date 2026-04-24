@@ -17,9 +17,9 @@ Sub Btn_Collect_Collab_nb_h()
     Set wsVerif = ThisWorkbook.Sheets(SHEET_VERIF_COLLABORATEUR)
     On Error GoTo ErrorHandler
 
-    If wsSynth Is Nothing Then MsgBox "SYNTHESE sheet not found.", vbCritical, "Error": Exit Sub
-    If wsGI Is Nothing Then MsgBox "Gestion_Interfaces sheet not found.", vbCritical, "Error": Exit Sub
-    If wsVerif Is Nothing Then MsgBox "Vérif_Collaborateur sheet not found.", vbCritical, "Error": Exit Sub
+    If wsSynth Is Nothing Then MsgBox "La feuille SYNTHESE est introuvable.", vbCritical, "Erreur": Exit Sub
+    If wsGI Is Nothing Then MsgBox "La feuille Gestion_Interfaces est introuvable.", vbCritical, "Erreur": Exit Sub
+    If wsVerif Is Nothing Then MsgBox "La feuille Vérif_Collaborateur est introuvable.", vbCritical, "Erreur": Exit Sub
 
     If GetBaseDir() = "" Then Exit Sub
     Application.ScreenUpdating = False
@@ -47,7 +47,7 @@ Sub Btn_Collect_Collab_nb_h()
 
     If collabList.Count = 0 Then
         Application.ScreenUpdating = True
-        MsgBox "No collaborators found.", vbInformation, "Nothing to Do": Exit Sub
+        MsgBox "Aucun collaborateur trouve.", vbInformation, "Aucune action": Exit Sub
     End If
 
     ' Aggregate hours per (collaborator, week)
@@ -81,7 +81,7 @@ Sub Btn_Collect_Collab_nb_h()
             wsVerif.Cells(VERIF_FIRST_COLLAB_ROW + i - 1, VERIF_COL_COLLAB).Value = collabList(i)
         Next i
         Application.ScreenUpdating = True
-        MsgBox "No SXXYY entries found. Collaborator list refreshed.", vbInformation, "No Data": Exit Sub
+        MsgBox "Aucune entree SXXYY trouvee. La liste des collaborateurs a ete actualisee.", vbInformation, "Aucune donnee": Exit Sub
     End If
 
     ' Sort week codes
@@ -168,12 +168,12 @@ Sub Btn_Collect_Collab_nb_h()
     Next weekCode
 
     Application.ScreenUpdating = True
-    MsgBox "Vérif_Collaborateur table updated.", vbInformation, "Update Complete"
+    MsgBox "La table Vérif_Collaborateur a ete mise a jour.", vbInformation, "Mise a jour terminee"
     Exit Sub
 
 ErrorHandler:
     Application.ScreenUpdating = True
-    MsgBox "Error in Collect_Collab_nb_h: " & Err.Number & " - " & Err.Description, vbCritical, "Unexpected Error"
+    MsgBox "Erreur dans Collect_Collab_nb_h : " & Err.Number & " - " & Err.Description, vbCritical, "Erreur inattendue"
 End Sub
 
 Sub Btn_Reset_Verif_Collaborateur()
@@ -182,16 +182,16 @@ Sub Btn_Reset_Verif_Collaborateur()
     Dim baseDir As String, archivePath As String, timestamp As String
     Dim lastRow As Long, lastCol As Long
 
-    archiveConfirm = MsgBox("This will delete all data from Vérif_Collaborateur." & vbCrLf & vbCrLf & _
-                           "Do you want to archive the current data before resetting?" & vbCrLf & _
-                           "(A copy will be saved in the Archived folder)", _
-                           vbYesNoCancel + vbQuestion, "Confirm Reset")
+    archiveConfirm = MsgBox("Cette action supprimera toutes les donnees de Vérif_Collaborateur." & vbCrLf & vbCrLf & _
+                           "Voulez-vous archiver les donnees actuelles avant reinitialisation ?" & vbCrLf & _
+                           "(Une copie sera enregistree dans le dossier Archived)", _
+                           vbYesNoCancel + vbQuestion, "Confirmation de reinitialisation")
     If archiveConfirm = vbCancel Then Exit Sub
 
     On Error Resume Next
     Set wsVerif = ThisWorkbook.Sheets(SHEET_VERIF_COLLABORATEUR)
     On Error GoTo 0
-    If wsVerif Is Nothing Then MsgBox "Vérif_Collaborateur sheet not found.", vbCritical, "Error": Exit Sub
+    If wsVerif Is Nothing Then MsgBox "La feuille Vérif_Collaborateur est introuvable.", vbCritical, "Erreur": Exit Sub
 
     If archiveConfirm = vbYes Then
         baseDir = GetBaseDir()
@@ -199,7 +199,7 @@ Sub Btn_Reset_Verif_Collaborateur()
         timestamp = Format(Now, "ddmmyyyy_HHMMSS")
         archivePath = baseDir & "\Archived\Vérif_Collaborateur_" & timestamp & ".xlsx"
         Application.ScreenUpdating = False
-        Application.StatusBar = "Creating archive file..."
+        Application.StatusBar = "Creation du fichier d'archive..."
         If Not ArchiveSingleSheet(wsVerif, archivePath, True, SHEET_VERIF_COLLABORATEUR) Then
             Application.StatusBar = False: Application.ScreenUpdating = True: Exit Sub
         End If
@@ -233,8 +233,8 @@ Sub Btn_Reset_Verif_Collaborateur()
     Application.ScreenUpdating = True
 
     If archiveConfirm = vbYes Then
-        MsgBox "Vérif_Collaborateur archived and reset." & vbCrLf & "Saved to: " & archivePath, vbInformation, "Reset Complete"
+        MsgBox "Vérif_Collaborateur archivee et reinitialisee." & vbCrLf & "Enregistre dans : " & archivePath, vbInformation, "Reinitialisation terminee"
     Else
-        MsgBox "Vérif_Collaborateur reset to base template.", vbInformation, "Reset Complete"
+        MsgBox "Vérif_Collaborateur reinitialisee sur le template de base.", vbInformation, "Reinitialisation terminee"
     End If
 End Sub

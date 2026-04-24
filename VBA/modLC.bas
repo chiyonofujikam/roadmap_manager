@@ -4,13 +4,23 @@ Sub Btn_Update_LC()
     Dim baseDir As String, templatePath As String, rmFolder As String
     Dim wsLCSource As Worksheet
     Dim fileName As String, filePath As String
-    Dim fileCount As Long, processedCount As Long
+    Dim fileCount As Long, processedCount As Long, failedCount As Long
     Dim startTime As Double, elapsedTime As Double
-    Dim fileList As Collection
+    Dim fileList As Collection, failedDetails As Collection
+    Dim failureReason As String, shortName As String
+    Dim updateOk As Boolean
+    Dim finalMsg As String, failMsg As String
+    Dim i As Long
+    Dim srcLastRow As Long
+    Dim srcValues As Variant
+    Dim lcPointageMap As Object
+    Dim isRmCollabFile As Boolean
+    Dim lcF As String, lcG As String, lcJ As String, lcK As String, mapKey As String
+    Dim mapVal(1 To 2) As Variant
 
-    If MsgBox("Do you want to proceed with updating the conditional lists (LC)?" & vbCrLf & _
-              "This will update LC in the template and all collaborator files.", _
-              vbYesNo + vbQuestion, "Confirm Update") = vbNo Then Exit Sub
+    If MsgBox("Voulez-vous lancer la mise a jour des listes LC ?" & vbCrLf & _
+              "Cette action mettra a jour LC dans le template et tous les fichiers collaborateurs.", _
+              vbYesNo + vbQuestion, "Confirmation de mise a jour") = vbNo Then Exit Sub
 
     baseDir = GetBaseDir()
     If baseDir = "" Then Exit Sub
@@ -19,9 +29,35 @@ Sub Btn_Update_LC()
     Set wsLCSource = ThisWorkbook.Sheets(SHEET_LC)
     On Error GoTo ErrorHandler
     If wsLCSource Is Nothing Then
-        MsgBox "LC sheet not found in the current workbook.", vbCritical, "Error"
+        MsgBox "La feuille LC est introuvable dans le classeur courant.", vbCritical, "Erreur"
         Exit Sub
     End If
+
+    If Application.WorksheetFunction.CountA(wsLCSource.Cells) = 0 Then
+        MsgBox "La feuille LC source est vide.", vbExclamation, "Aucune action"
+        Exit Sub
+    End If
+
+    srcLastRow = wsLCSource.UsedRange.Rows(wsLCSource.UsedRange.Rows.Count).Row
+    If srcLastRow < 2 Then
+        MsgBox "Aucune donnee LC source a copier.", vbExclamation, "Aucune action"
+        Exit Sub
+    End If
+    srcValues = wsLCSource.Range("B2:K" & srcLastRow).Value2
+    Set lcPointageMap = CreateObject("Scripting.Dictionary")
+    lcPointageMap.CompareMode = 1
+    For i = 3 To UBound(srcValues, 1)
+        lcF = Trim$(CStr(srcValues(i, 5))) ' LC col F
+        lcG = Trim$(CStr(srcValues(i, 6))) ' LC col G
+        lcJ = Trim$(CStr(srcValues(i, 9))) ' LC col J
+        lcK = Trim$(CStr(srcValues(i, 10))) ' LC col K
+        mapKey = lcF & LC_LOOKUP_KEY_DELIM & lcG & LC_LOOKUP_KEY_DELIM & lcJ & LC_LOOKUP_KEY_DELIM & lcK
+        If Not lcPointageMap.Exists(mapKey) Then
+            mapVal(1) = srcValues(i, 7)    ' LC col H -> POINTAGE H
+            mapVal(2) = srcValues(i, 8)    ' LC col I -> POINTAGE I
+            lcPointageMap.Add mapKey, Array(mapVal(1), mapVal(2))
+        End If
+    Next i
 
     startTime = Timer
     Application.ScreenUpdating = False
@@ -32,9 +68,10 @@ Sub Btn_Update_LC()
 
     templatePath = baseDir & "\RM_template.xlsx"
     rmFolder = baseDir & "\RM_Collaborateurs"
-    Application.StatusBar = "Updating LC in template and collaborator files..."
+    Application.StatusBar = "Mise a jour de LC dans le template et les fichiers collaborateurs..."
 
     Set fileList = New Collection
+    Set failedDetails = New Collection
     fileList.Add templatePath
     fileName = Dir(rmFolder & "\RM_*.xlsx")
     Do While fileName <> ""
@@ -43,9 +80,34 @@ Sub Btn_Update_LC()
     Loop
 
     processedCount = 0
+    failedCount = 0
     For fileCount = 1 To fileList.Count
-        Application.StatusBar = "Updating LC: " & fileCount & " of " & fileList.Count & " files..."
-        If UpdateLCInWorkbook(fileList(fileCount), wsLCSource) Then processedCount = processedCount + 1
+        filePath = CStr(fileList(fileCount))
+        shortName = Mid$(filePath, InStrRev(filePath, "\") + 1)
+        isRmCollabFile = (InStr(1, filePath, rmFolder & "\", vbTextCompare) = 1)
+        Application.StatusBar = "Mise a jour LC : " & fileCount & " sur " & fileList.Count & " fichiers... (" & shortName & ")"
+
+        failureReason = ""
+        On Error Resume Next
+        updateOk = UpdateLCInWorkbook(filePath, wsLCSource, srcLastRow, srcValues, failureReason, isRmCollabFile, lcPointageMap)
+        If updateOk Then
+            processedCount = processedCount + 1
+        Else
+            failedCount = failedCount + 1
+            If failureReason = "" Then failureReason = "Echec inconnu."
+            failedDetails.Add shortName & " : " & failureReason
+        End If
+        If Err.Number <> 0 Then
+            If updateOk Then
+                failedCount = failedCount + 1
+                processedCount = processedCount - 1
+                failedDetails.Add shortName & " : Erreur VBA " & Err.Number & " - " & Err.Description
+            ElseIf failureReason = "" Then
+                failedDetails.Add shortName & " : Erreur VBA " & Err.Number & " - " & Err.Description
+            End If
+            Err.Clear
+        End If
+        On Error GoTo ErrorHandler
         DoEvents
     Next fileCount
 
@@ -65,8 +127,22 @@ Sub Btn_Update_LC()
         timeMsg = Format(Int(elapsedTime / 60), "0") & " min " & Format(elapsedTime Mod 60, "0.00") & " s"
     End If
 
-    MsgBox "LC updated in template and " & (processedCount - 1) & " collaborator file(s)." & vbCrLf & _
-           "Time: " & timeMsg, vbInformation, "Update Complete"
+    finalMsg = "Mise a jour LC terminee." & vbCrLf & _
+               "- Fichiers traites : " & fileList.Count & vbCrLf & _
+               "- Succes : " & processedCount & vbCrLf & _
+               "- Echecs : " & failedCount & vbCrLf & _
+               "Duree : " & timeMsg
+
+    If failedCount > 0 Then
+        failMsg = ""
+        For i = 1 To failedDetails.Count
+            failMsg = failMsg & vbCrLf & "  * " & failedDetails(i)
+        Next i
+        finalMsg = finalMsg & vbCrLf & vbCrLf & "Fichiers en echec :" & failMsg
+        MsgBox finalMsg, vbExclamation, "Mise a jour terminee avec erreurs"
+    Else
+        MsgBox finalMsg, vbInformation, "Mise a jour terminee"
+    End If
     Exit Sub
 
 ErrorHandler:
@@ -83,10 +159,10 @@ Sub Btn_Reset_LC()
     Dim baseDir As String, archivePath As String, timestamp As String
     Dim firstLookupDataRow As Long, lastLookupRow As Long
 
-    archiveConfirm = MsgBox("This will clear the LC lookup table (columns F to K starting from row 3)." & vbCrLf & vbCrLf & _
-                            "Do you want to ARCHIVE the current LC table before clearing it?" & vbCrLf & _
-                            "(A copy will be saved in the Archived folder)", _
-                            vbYesNoCancel + vbQuestion, "Confirm LC Reset")
+    archiveConfirm = MsgBox("Cette action va vider la table de correspondance LC (colonnes F a K a partir de la ligne 3)." & vbCrLf & vbCrLf & _
+                            "Voulez-vous ARCHIVER la table LC actuelle avant de la vider ?" & vbCrLf & _
+                            "(Une copie sera enregistree dans le dossier Archived)", _
+                            vbYesNoCancel + vbQuestion, "Confirmation de reinitialisation LC")
     If archiveConfirm = vbCancel Then Exit Sub
 
     On Error GoTo ErrorHandler
@@ -98,7 +174,7 @@ Sub Btn_Reset_LC()
 
     If wsLC Is Nothing Then
         Application.ScreenUpdating = True
-        MsgBox "LC sheet not found.", vbCritical, "Error"
+        MsgBox "La feuille LC est introuvable.", vbCritical, "Erreur"
         Exit Sub
     End If
 
@@ -107,7 +183,7 @@ Sub Btn_Reset_LC()
         If baseDir = "" Then Application.ScreenUpdating = True: Exit Sub
         timestamp = Format(Now, "ddmmyyyy_HHMMSS")
         archivePath = baseDir & "\Archived\LC_" & timestamp & ".xlsx"
-        Application.StatusBar = "Creating LC archive..."
+        Application.StatusBar = "Creation de l'archive LC..."
         If Not ArchiveSingleSheet(wsLC, archivePath, True, SHEET_LC) Then
             Application.ScreenUpdating = True: Application.StatusBar = False: Exit Sub
         End If
@@ -122,12 +198,12 @@ Sub Btn_Reset_LC()
                wsLC.Cells(lastLookupRow, LC_LOOKUP_COL_K)).ClearContents
 
     Application.ScreenUpdating = True
-    MsgBox "LC table has been cleared.", vbInformation, "Reset Complete"
+    MsgBox "La table LC a ete videe.", vbInformation, "Reinitialisation terminee"
     Exit Sub
 
 ErrorHandler:
     Application.ScreenUpdating = True
-    MsgBox "Error in Btn_Reset_LC: " & Err.Number & " - " & Err.Description, vbCritical, "Unexpected Error"
+    MsgBox "Erreur dans Btn_Reset_LC : " & Err.Number & " - " & Err.Description, vbCritical, "Erreur inattendue"
 End Sub
 
 Sub Btn_Extract_LC_MSP()
@@ -139,9 +215,9 @@ Sub Btn_Extract_LC_MSP()
     Dim dict As Object, keyFK As String
     Dim vB As String, vF As String, vN As Variant, vO As Variant, vC As Variant, vU As Variant
 
-    If MsgBox("Do you want to regenerate the LC lookup table from Extract_MSP?" & vbCrLf & _
-              "This will overwrite existing values in LC (columns F to K starting from row 3).", _
-              vbYesNo + vbQuestion, "Confirm LC Generation") = vbNo Then Exit Sub
+    If MsgBox("Voulez-vous regenerer la table de correspondance LC depuis Extract_MSP ?" & vbCrLf & _
+              "Cette action ecrasera les valeurs existantes de LC (colonnes F a K a partir de la ligne 3).", _
+              vbYesNo + vbQuestion, "Confirmation de generation LC") = vbNo Then Exit Sub
 
     If GetBaseDir() = "" Then Exit Sub
 
@@ -156,17 +232,17 @@ Sub Btn_Extract_LC_MSP()
 
     If wsLC Is Nothing Then
         Application.ScreenUpdating = True: Application.Calculation = xlCalculationAutomatic
-        MsgBox "LC sheet not found.", vbCritical, "Error": Exit Sub
+        MsgBox "La feuille LC est introuvable.", vbCritical, "Erreur": Exit Sub
     End If
     If wsSrc Is Nothing Then
         Application.ScreenUpdating = True: Application.Calculation = xlCalculationAutomatic
-        MsgBox "Extract_MSP sheet not found.", vbCritical, "Error": Exit Sub
+        MsgBox "La feuille Extract_MSP est introuvable.", vbCritical, "Erreur": Exit Sub
     End If
 
     lastRow = wsSrc.Cells(wsSrc.Rows.Count, "B").End(xlUp).Row
     If lastRow < 3 Then
         Application.ScreenUpdating = True: Application.Calculation = xlCalculationAutomatic
-        MsgBox "No data found in Extract_MSP.", vbInformation, "Nothing to Do": Exit Sub
+        MsgBox "Aucune donnee trouvee dans Extract_MSP.", vbInformation, "Aucune action"
     End If
 
     ' Bulk-read all needed source columns (B,C,F,N,O,U) into one array (cols A-U = 1-21)
@@ -231,12 +307,12 @@ Sub Btn_Extract_LC_MSP()
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "LC table generated: " & outIdx & " unique rows from " & (lastRow - 1) & " source rows.", _
-           vbInformation, "Update Complete"
+    MsgBox "Table LC generee : " & outIdx & " ligne(s) unique(s) depuis " & (lastRow - 1) & " ligne(s) source.", _
+           vbInformation, "Mise a jour terminee"
     Exit Sub
 
 ErrorHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Error in Extract_LC_MSP: " & Err.Number & " - " & Err.Description, vbCritical, "Unexpected Error"
+    MsgBox "Erreur dans Extract_LC_MSP : " & Err.Number & " - " & Err.Description, vbCritical, "Erreur inattendue"
 End Sub

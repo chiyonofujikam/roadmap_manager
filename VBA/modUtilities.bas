@@ -15,9 +15,9 @@ Function GetBaseDir() As String
         Exit Function
     End If
 
-    MsgBox "Please select the base directory"
+    MsgBox "Veuillez selectionner le dossier racine"
     Set f = Application.FileDialog(msoFileDialogFolderPicker)
-    If f.Show <> -1 Then MsgBox "No folder selected.", vbExclamation: Exit Function
+    If f.Show <> -1 Then MsgBox "Aucun dossier selectionne.", vbExclamation: Exit Function
 
     GLOBAL_BASEDIR = f.SelectedItems(1)
     PYTHONEXE = """" & GLOBAL_BASEDIR & "\script\roadmap.exe" & """" & " "
@@ -34,7 +34,7 @@ Function LoadXMLTable(filePath As String) As Collection
     xml.Load filePath
 
     If xml.parseError.ErrorCode <> 0 Then
-        MsgBox "XML parse error: " & xml.parseError.reason, vbCritical
+        MsgBox "Erreur d'analyse XML : " & xml.parseError.reason, vbCritical
         Exit Function
     End If
 
@@ -84,7 +84,7 @@ Function CreateCollabsXML(baseDir As String) As Boolean
     On Error Resume Next
     Set ws = ThisWorkbook.Sheets(SHEET_GESTION_INTERFACES)
     If Err.Number <> 0 Then
-        MsgBox "Gestion_Interfaces sheet not found.", vbCritical, "Error"
+        MsgBox "La feuille Gestion_Interfaces est introuvable.", vbCritical, "Erreur"
         CreateCollabsXML = False: Exit Function
     End If
     On Error GoTo 0
@@ -104,7 +104,7 @@ Function CreateCollabsXML(baseDir As String) As Boolean
     On Error Resume Next
     Set xmlStream = CreateObject("ADODB.Stream")
     If Err.Number <> 0 Then
-        MsgBox "Error creating file stream: " & Err.Description, vbCritical, "Error"
+        MsgBox "Erreur lors de la creation du flux de fichier : " & Err.Description, vbCritical, "Erreur"
         CreateCollabsXML = False: Exit Function
     End If
     On Error GoTo 0
@@ -129,7 +129,7 @@ Function CreateLCExcel(baseDir As String) As Boolean
     On Error Resume Next
     Set ws = ThisWorkbook.Sheets(SHEET_LC)
     If Err.Number <> 0 Then
-        MsgBox "LC sheet not found.", vbCritical, "Error"
+        MsgBox "La feuille LC est introuvable.", vbCritical, "Erreur"
         CreateLCExcel = False: Exit Function
     End If
     On Error GoTo 0
@@ -140,13 +140,13 @@ Function CreateLCExcel(baseDir As String) As Boolean
     On Error Resume Next
     Set wbNew = Workbooks.Add
     If Err.Number <> 0 Then
-        MsgBox "Error creating new workbook: " & Err.Description, vbCritical, "Error"
+        MsgBox "Erreur lors de la creation du nouveau classeur : " & Err.Description, vbCritical, "Erreur"
         CreateLCExcel = False: Exit Function
     End If
 
     ws.Copy Before:=wbNew.Sheets(1)
     If Err.Number <> 0 Then
-        MsgBox "Error copying LC sheet: " & Err.Description, vbCritical, "Error"
+        MsgBox "Erreur lors de la copie de la feuille LC : " & Err.Description, vbCritical, "Erreur"
         wbNew.Close SaveChanges:=False
         CreateLCExcel = False: Exit Function
     End If
@@ -190,7 +190,7 @@ Function CreateLCExcel(baseDir As String) As Boolean
     On Error Resume Next
     wbNew.SaveAs excelPath, FileFormat:=xlOpenXMLWorkbook
     If Err.Number <> 0 Then
-        MsgBox "Error saving LC.xlsx: " & Err.Description, vbCritical, "Error"
+        MsgBox "Erreur lors de l'enregistrement de LC.xlsx : " & Err.Description, vbCritical, "Erreur"
         wbNew.Close SaveChanges:=False
         CreateLCExcel = False: Exit Function
     End If
@@ -334,36 +334,71 @@ Sub CleanupGestionInterfaces()
     Next row
 End Sub
 
-Function UpdateLCInWorkbook(targetPath As String, wsSource As Worksheet) As Boolean
+Function UpdateLCInWorkbook(targetPath As String, wsSource As Worksheet, _
+                           ByVal srcLastRow As Long, ByRef srcValues As Variant, _
+                           Optional ByRef failureReason As String = "", _
+                           Optional ByVal fillPointage As Boolean = False, _
+                           Optional ByRef lcPointageMap As Object = Nothing) As Boolean
     Dim wb As Workbook, wsDest As Worksheet
     Dim lastRow As Long
     Dim fso As Object
+    Dim pointageErr As String
 
     UpdateLCInWorkbook = False
+    failureReason = ""
     On Error GoTo CleanExit
 
     Set fso = CreateObject("Scripting.FileSystemObject")
-    If Not fso.FileExists(targetPath) Then Exit Function
+    If Not fso.FileExists(targetPath) Then
+        failureReason = "Fichier introuvable."
+        Exit Function
+    End If
     Set fso = Nothing
 
     Set wb = Workbooks.Open(targetPath, UpdateLinks:=False, ReadOnly:=False, _
                             Notify:=False, AddToMru:=False)
-    If wb Is Nothing Then Exit Function
+    If wb Is Nothing Then
+        failureReason = "Impossible d'ouvrir le classeur."
+        Exit Function
+    End If
     If wb.Windows.Count > 0 Then wb.Windows(1).Visible = False
 
     Set wsDest = wb.Sheets(SHEET_LC)
-    If wsDest Is Nothing Then GoTo CleanExit
+    If wsDest Is Nothing Then
+        failureReason = "Feuille LC absente dans le classeur cible."
+        GoTo CleanExit
+    End If
 
-    If Application.WorksheetFunction.CountA(wsSource.Cells) = 0 Then GoTo CleanExit
-    lastRow = wsSource.UsedRange.Rows(wsSource.UsedRange.Rows.Count).Row
-    If lastRow < 2 Then GoTo CleanExit
+    lastRow = srcLastRow
+    If lastRow < 2 Then
+        failureReason = "Aucune donnee LC source a copier."
+        GoTo CleanExit
+    End If
 
-    wsDest.Range("B2:H" & lastRow).NumberFormat = "@"
-    wsDest.Range("I2:I" & lastRow).NumberFormat = "dd/mm/yyyy"
+    ' Enforce destination formats before writing values:
+    ' - Text: B,C,D,E,F,G,J
+    ' - Date: H
+    ' - Numeric: I,K
+    wsDest.Range("B2:G" & lastRow).NumberFormat = "@"
+    wsDest.Range("J2:J" & lastRow).NumberFormat = "@"
+    wsDest.Range("H2:H" & lastRow).NumberFormat = "dd/mm/yyyy"
+    wsDest.Range("I2:I" & lastRow).NumberFormat = "General"
+    wsDest.Range("K2:K" & lastRow).NumberFormat = "General"
 
-    wsSource.Range("B2:I" & lastRow).Copy
-    wsDest.Range("B2:I" & lastRow).PasteSpecial Paste:=xlPasteValues
-    Application.CutCopyMode = False
+    ' Ecriture en bloc (beaucoup plus rapide que Copy/Paste + boucle cellule par cellule)
+    wsDest.Range("B2:K" & lastRow).ClearContents
+    wsDest.Range("B2:K" & lastRow).Value2 = srcValues
+
+    If fillPointage Then
+        If lcPointageMap Is Nothing Then
+            failureReason = "Table de correspondance LC->POINTAGE indisponible."
+            GoTo CleanExit
+        End If
+        If Not FillPointageFromLCMap(wb, lcPointageMap, pointageErr) Then
+            failureReason = pointageErr
+            GoTo CleanExit
+        End If
+    End If
 
     If wb.Windows.Count > 0 Then wb.Windows(1).Visible = True
     wb.Close SaveChanges:=True
@@ -372,11 +407,86 @@ Function UpdateLCInWorkbook(targetPath As String, wsSource As Worksheet) As Bool
 
 CleanExit:
     On Error Resume Next
-    Application.CutCopyMode = False
+    If Err.Number <> 0 And failureReason = "" Then
+        failureReason = "Erreur VBA " & Err.Number & " : " & Err.Description
+    End If
     If Not wb Is Nothing Then
         If wb.Windows.Count > 0 Then wb.Windows(1).Visible = True
         wb.Close SaveChanges:=False
     End If
+End Function
+
+Function FillPointageFromLCMap(targetWb As Workbook, lcPointageMap As Object, _
+                               Optional ByRef failureReason As String = "") As Boolean
+    Dim wsPointage As Worksheet
+    Dim lastRow As Long, r As Long
+    Dim key As String
+    Dim valE As String, valF As String, valG As String
+    Dim part1 As String, part2 As String
+    Dim posSprint As Long
+    Dim mappedVals As Variant
+
+    FillPointageFromLCMap = False
+    failureReason = ""
+    On Error GoTo ErrorHandler
+
+    Set wsPointage = targetWb.Sheets(SHEET_POINTAGE)
+    If wsPointage Is Nothing Then
+        failureReason = "Feuille POINTAGE absente dans le classeur cible."
+        Exit Function
+    End If
+
+    lastRow = wsPointage.Cells(wsPointage.Rows.Count, "E").End(xlUp).Row
+    If lastRow < 4 Then
+        FillPointageFromLCMap = True
+        Exit Function
+    End If
+
+    wsPointage.Range("H4:H" & lastRow).NumberFormat = "dd/mm/yyyy"
+
+    For r = 4 To lastRow
+        valE = Trim$(CStr(wsPointage.Cells(r, "E").Value))
+        valF = Trim$(CStr(wsPointage.Cells(r, "F").Value))
+        valG = Trim$(CStr(wsPointage.Cells(r, "G").Value))
+
+        posSprint = InStr(1, valE, "Sprint", vbTextCompare)
+        If posSprint = 0 Then
+            wsPointage.Cells(r, "H").ClearContents
+            wsPointage.Cells(r, "I").ClearContents
+            GoTo NextPointageRow
+        End If
+
+        part1 = Trim$(Left$(valE, posSprint - 1))      ' -> LC G
+        part2 = Trim$(Mid$(valE, posSprint + 6))       ' -> LC K
+        If part2 = "" Then
+            wsPointage.Cells(r, "H").ClearContents
+            wsPointage.Cells(r, "I").ClearContents
+            GoTo NextPointageRow
+        End If
+
+        ' Mapping final (cas reel RM):
+        ' POINTAGE E (partie avant "Sprint") -> LC F
+        ' POINTAGE F -> LC G
+        ' POINTAGE G -> LC J
+        ' POINTAGE E (partie apres "Sprint") -> LC K
+        key = part1 & LC_LOOKUP_KEY_DELIM & valF & LC_LOOKUP_KEY_DELIM & valG & LC_LOOKUP_KEY_DELIM & part2
+
+        If lcPointageMap.Exists(key) Then
+            mappedVals = lcPointageMap(key)
+            wsPointage.Cells(r, "H").Value = mappedVals(0) ' LC H -> POINTAGE H
+            wsPointage.Cells(r, "I").Value = mappedVals(1) ' LC I -> POINTAGE I
+        Else
+            wsPointage.Cells(r, "H").ClearContents
+            wsPointage.Cells(r, "I").ClearContents
+        End If
+NextPointageRow:
+    Next r
+
+    FillPointageFromLCMap = True
+    Exit Function
+
+ErrorHandler:
+    failureReason = "Erreur lors du remplissage de POINTAGE : " & Err.Number & " - " & Err.Description
 End Function
 
 Sub FixHiddenWindows()
@@ -438,7 +548,7 @@ Sub FixHiddenWindows()
 
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-    MsgBox "Fixed window visibility for " & fixedCount & " file(s).", vbInformation, "Fix Complete"
+    MsgBox "Visibilite des fenetres corrigee pour " & fixedCount & " fichier(s).", vbInformation, "Correction terminee"
     Exit Sub
 
 ErrorHandler:
@@ -488,5 +598,5 @@ ErrHandler:
     On Error Resume Next
     If Not newWb Is Nothing Then newWb.Close SaveChanges:=False
     Application.DisplayAlerts = True
-    MsgBox "Error archiving sheet '" & wsSource.Name & "': " & Err.Description, vbCritical, "Archive Error"
+    MsgBox "Erreur lors de l'archivage de la feuille '" & wsSource.Name & "' : " & Err.Description, vbCritical, "Erreur d'archivage"
 End Function

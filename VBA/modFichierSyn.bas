@@ -35,15 +35,15 @@ Sub Btn_Collect_FS_Data()
 
     If wsFS Is Nothing Then
         Application.ScreenUpdating = True: Application.Calculation = xlCalculationAutomatic: Application.EnableEvents = True
-        MsgBox "Fichier de synthèse sheet not found.", vbCritical, "Error": Exit Sub
+        MsgBox "La feuille Fichier de synthese est introuvable.", vbCritical, "Erreur": Exit Sub
     End If
     If wsLC Is Nothing Then
         Application.ScreenUpdating = True: Application.Calculation = xlCalculationAutomatic: Application.EnableEvents = True
-        MsgBox "LC sheet not found.", vbCritical, "Error": Exit Sub
+        MsgBox "La feuille LC est introuvable.", vbCritical, "Erreur": Exit Sub
     End If
     If wsSynth Is Nothing Then
         Application.ScreenUpdating = True: Application.Calculation = xlCalculationAutomatic: Application.EnableEvents = True
-        MsgBox "SYNTHESE sheet not found.", vbCritical, "Error": Exit Sub
+        MsgBox "La feuille SYNTHESE est introuvable.", vbCritical, "Erreur": Exit Sub
     End If
 
     ' === BULK-READ source data into arrays (single COM call each) ===
@@ -319,14 +319,14 @@ Done:
     Application.EnableEvents = True
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Fichier de synthèse tables updated.", vbInformation, "Update Complete"
+    MsgBox "Les tableaux du Fichier de synthese ont ete mis a jour.", vbInformation, "Mise a jour terminee"
     Exit Sub
 
 ErrorHandler:
     Application.EnableEvents = True
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Error in Btn_Collect_FS_Data: " & Err.Number & " - " & Err.Description, vbCritical, "Unexpected Error"
+    MsgBox "Erreur dans Btn_Collect_FS_Data : " & Err.Number & " - " & Err.Description, vbCritical, "Erreur inattendue"
 End Sub
 
 Sub Btn_Reset_FS()
@@ -336,10 +336,10 @@ Sub Btn_Reset_FS()
     Dim lastDataRow As Long, headerRow3 As Long, firstCol3 As Long
     Dim lastCol3 As Long, lastCol3_row6 As Long, lastRow3 As Long
 
-    archiveConfirm = MsgBox("This will clear the generated tables in 'Fichier de synthèse'." & vbCrLf & vbCrLf & _
-                           "Do you want to SAVE/ARCHIVE the current sheet before resetting?" & vbCrLf & _
-                           "(A copy will be saved in the Archived folder).", _
-                           vbYesNoCancel + vbQuestion, "Confirm FS Reset")
+    archiveConfirm = MsgBox("Cette action va vider les tableaux generes dans 'Fichier de synthese'." & vbCrLf & vbCrLf & _
+                           "Voulez-vous ENREGISTRER/ARCHIVER la feuille actuelle avant reinitialisation ?" & vbCrLf & _
+                           "(Une copie sera enregistree dans le dossier Archived).", _
+                           vbYesNoCancel + vbQuestion, "Confirmation de reinitialisation FS")
     If archiveConfirm = vbCancel Then Exit Sub
 
     On Error GoTo ErrorHandler
@@ -351,7 +351,7 @@ Sub Btn_Reset_FS()
 
     If wsFS Is Nothing Then
         Application.ScreenUpdating = True
-        MsgBox "Fichier de synthèse sheet not found.", vbCritical, "Error"
+        MsgBox "La feuille Fichier de synthese est introuvable.", vbCritical, "Erreur"
         Exit Sub
     End If
 
@@ -360,7 +360,7 @@ Sub Btn_Reset_FS()
         If baseDir = "" Then Application.ScreenUpdating = True: Exit Sub
         timestamp = Format(Now, "ddmmyyyy_HHMMSS")
         archivePath = baseDir & "\Archived\Fichier_de_synthese_" & timestamp & ".xlsx"
-        Application.StatusBar = "Archiving Fichier de synthèse..."
+        Application.StatusBar = "Archivage du Fichier de synthese..."
         If Not ArchiveSingleSheet(wsFS, archivePath, True, SHEET_FICHIER_SYNTHESE) Then
             Application.ScreenUpdating = True: Application.StatusBar = False: Exit Sub
         End If
@@ -408,10 +408,10 @@ Sub Btn_Reset_FS()
     End If
 
     Application.ScreenUpdating = True
-    MsgBox "Fichier de synthèse tables have been cleared.", vbInformation, "Reset Complete"
+    MsgBox "Les tableaux du Fichier de synthese ont ete vides.", vbInformation, "Reinitialisation terminee"
     Exit Sub
 
 ErrorHandler:
     Application.ScreenUpdating = True
-    MsgBox "Error in Btn_Reset_FS: " & Err.Number & " - " & Err.Description, vbCritical, "Unexpected Error"
+    MsgBox "Erreur dans Btn_Reset_FS : " & Err.Number & " - " & Err.Description, vbCritical, "Erreur inattendue"
 End Sub

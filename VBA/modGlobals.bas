@@ -11,6 +11,7 @@ Public Const SHEET_GESTION_INTERFACES As String = "Gestion_Interfaces"
 Public Const SHEET_VERIF_COLLABORATEUR As String = "Vérif_Collaborateur"
 Public Const SHEET_EXTRACT_MSP As String = "Extract_MSP"
 Public Const SHEET_FICHIER_SYNTHESE As String = "Fichier de synthèse"
+Public Const SHEET_POINTAGE As String = "POINTAGE"
 
 ' SYNTHESE layout (columns A-J)
 Public Const SYN_FIRST_DATA_ROW As Long = 3
